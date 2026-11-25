@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::engine::contract::Execute;
 use crate::error::spider::Error as SpiderError;
@@ -143,13 +144,14 @@ where
     let parse_retry = registry
         .retry_policy(&response.middlewares, "error_parse")
         .map_err(crate::Error::Middleware)?;
+    let accepted_items = Arc::new(Mutex::new(HashSet::new()));
     let mut parse_attempt = 0;
     loop {
         let error_response = response.clone();
         let parsing = crate::trace::operation(
             "executor.parse",
             Some(parse_attempt + 1),
-            tx::scope(claimed, stats.clone(), async {
+            tx::scope(claimed, stats.clone(), accepted_items.clone(), async {
                 executor.parse(request.clone(), response.clone()).await
             }),
             crate::trace::error_class,

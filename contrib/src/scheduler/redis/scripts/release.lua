@@ -112,7 +112,7 @@ local ready_events = prefix .. 'ready_events:' .. mode
 if not has_type(processing, 'zset') then return 'CORRUPT_PROCESSING' end
 if not has_type(other_processing, 'zset') then return 'CORRUPT_PROCESSING' end
 if not has_type(failed_workers, 'list') then return 'CORRUPT_FAILED_WORKERS' end
-if redis.call('LLEN', failed_workers) > retry_count then return 'CORRUPT_FAILED_WORKERS' end
+if redis.call('LLEN', failed_workers) > MAX_RETRY_COUNT then return 'CORRUPT_FAILED_WORKERS' end
 if not has_type(exclusions, 'zset') then return 'CORRUPT_PENDING_EXCLUSIONS' end
 if not has_type(ready_events, 'zset') then return 'CORRUPT_READY_EVENTS' end
 if not has_type(KEYS[2], 'hash') then return 'CORRUPT_META' end

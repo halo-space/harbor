@@ -338,7 +338,7 @@ async fn offline_worker_recovery_requeues_the_request() {
         "expired-processing",
         "https://example.com/expired-processing",
     );
-    original.max_retry_count = 3;
+    original.max_retry_count = 1;
     scheduler
         .push(payload::Payload::new().requests(vec![original]))
         .await
@@ -351,11 +351,10 @@ async fn offline_worker_recovery_requeues_the_request() {
 
     scheduler.close().await.unwrap();
     assert_eq!(worker_b.recover_worker(worker::A).await.unwrap(), 1);
-
     let recovered = worker_b.next_requests(1).await.unwrap().pop().unwrap();
     assert_eq!(recovered.id, claimed.id);
     assert_eq!(recovered.version, claimed.version + 1);
-    assert_eq!(recovered.retry_count, claimed.retry_count + 1);
+    assert_eq!(recovered.retry_count, 0);
     assert_eq!(recovered.failed_workers, [worker::A]);
     let mut connection = server.connection().await;
     let stored = redis::cmd("HGET")

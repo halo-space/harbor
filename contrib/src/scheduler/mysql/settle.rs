@@ -150,12 +150,6 @@ impl Scheduler {
             scheduler::Error::Message(format!("request retry overflow: {}", payload.id))
         })?;
         let failed_workers = failed_workers(&mut transaction, &payload.id).await?;
-        if failed_workers.len() > request.retry_count as usize {
-            return Err(scheduler::Error::InvalidRequest {
-                id: payload.id.clone(),
-                message: "stored failed Workers exceed retry_count".to_string(),
-            });
-        }
         if !failed_workers
             .iter()
             .any(|worker| worker == &request.leased_by)

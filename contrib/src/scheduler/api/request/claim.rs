@@ -603,12 +603,6 @@ fn validate_execution(
             message: "claimed Request failed_workers are invalid".to_string(),
         });
     }
-    if execution.failed_workers.len() > execution.retry_count as usize {
-        return Err(scheduler::Error::InvalidRequest {
-            id,
-            message: "claimed Request failed_workers exceed retry_count".to_string(),
-        });
-    }
     Ok(())
 }
 

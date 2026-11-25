@@ -50,7 +50,6 @@ struct LeasedRequest {
     snapshot: Value,
     snapshot_hash: Vec<u8>,
     version: i64,
-    retry_count: i32,
     leased_by: String,
     acknowledged: bool,
 }
@@ -357,7 +356,7 @@ impl MySql {
         loop {
             let rows = sqlx::query(
                 "SELECT id, task_id, trace_id, node, mode, priority, snapshot, snapshot_hash, \
-                        version, retry_count, leased_by, ack_version \
+                        version, leased_by, ack_version \
                  FROM requests \
                  WHERE state = 1 AND leased_by = ? \
                  ORDER BY id ASC \
@@ -384,7 +383,6 @@ impl MySql {
                     snapshot: row.try_get("snapshot").map_err(sql_error)?,
                     snapshot_hash: row.try_get("snapshot_hash").map_err(sql_error)?,
                     version,
-                    retry_count: row.try_get("retry_count").map_err(sql_error)?,
                     leased_by: decode::string(&row, "leased_by")?,
                     acknowledged: row
                         .try_get::<Option<i64>, _>("ack_version")
@@ -739,7 +737,7 @@ async fn recover_worker_request(
 
     if !request.acknowledged {
         sqlx::query(
-            "UPDATE requests SET state = 0, next_time = 0, leased_by = '', \
+            "UPDATE requests SET state = 0, retry_count = 0, next_time = 0, leased_by = '', \
                     lease_time = 0, ack_version = NULL, updated_time = CURRENT_TIMESTAMP(3) \
              WHERE id = ? AND state = 1 AND version = ? AND leased_by = ?",
         )
@@ -771,15 +769,6 @@ async fn recover_worker_request(
         .await;
     };
 
-    let retry =
-        request
-            .retry_count
-            .checked_add(1)
-            .ok_or_else(|| scheduler::Error::InvalidRequest {
-                id: request.id.clone(),
-                message: "request retry overflow while recovering offline Worker Request"
-                    .to_string(),
-            })?;
     record_failed_worker(transaction, &request.id, &request.leased_by).await?;
     record_failure(
         transaction,
@@ -793,40 +782,20 @@ async fn recover_worker_request(
     )
     .await?;
 
-    if retry < max_retry_count {
-        sqlx::query(
-            "UPDATE requests SET state = 0, retry_count = ?, max_retry_count = ?, \
-                    next_time = 0, \
-                    leased_by = '', lease_time = 0, ack_version = NULL, \
-                    updated_time = CURRENT_TIMESTAMP(3) \
-             WHERE id = ? AND state = 1 AND version = ? AND leased_by = ?",
-        )
-        .bind(retry)
-        .bind(max_retry_count)
-        .bind(&request.id)
-        .bind(request.version)
-        .bind(&request.leased_by)
-        .execute(&mut **transaction)
-        .await
-        .map_err(sql_error)?;
-        enqueue_values(transaction, &request.id, &request.mode, request.priority, 0).await?;
-    } else {
-        sqlx::query(
-            "UPDATE requests SET state = 3, retry_count = ?, max_retry_count = ?, \
-                    next_time = 0, \
-                    leased_by = '', lease_time = 0, ack_version = NULL, \
-                    updated_time = CURRENT_TIMESTAMP(3) \
-             WHERE id = ? AND state = 1 AND version = ? AND leased_by = ?",
-        )
-        .bind(retry)
-        .bind(max_retry_count)
-        .bind(&request.id)
-        .bind(request.version)
-        .bind(&request.leased_by)
-        .execute(&mut **transaction)
-        .await
-        .map_err(sql_error)?;
-    }
+    sqlx::query(
+        "UPDATE requests SET state = 0, retry_count = 0, max_retry_count = ?, \
+                next_time = 0, leased_by = '', lease_time = 0, ack_version = NULL, \
+                updated_time = CURRENT_TIMESTAMP(3) \
+         WHERE id = ? AND state = 1 AND version = ? AND leased_by = ?",
+    )
+    .bind(max_retry_count)
+    .bind(&request.id)
+    .bind(request.version)
+    .bind(&request.leased_by)
+    .execute(&mut **transaction)
+    .await
+    .map_err(sql_error)?;
+    enqueue_values(transaction, &request.id, &request.mode, request.priority, 0).await?;
     Ok(())
 }
 

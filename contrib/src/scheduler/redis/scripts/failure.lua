@@ -189,7 +189,7 @@ local failed_workers = prefix .. 'request:' .. segment .. ':failed_workers'
 local exclusions = prefix .. 'pending_exclusions:' .. mode
 local ready_events = prefix .. 'ready_events:' .. mode
 if not has_type(failed_workers, 'list') then return 'CORRUPT_FAILED_WORKERS' end
-if redis.call('LLEN', failed_workers) > retry_count then return 'CORRUPT_FAILED_WORKERS' end
+if redis.call('LLEN', failed_workers) > MAX_RETRY_COUNT then return 'CORRUPT_FAILED_WORKERS' end
 if retry < retry_limit then
     if not has_type(meta, 'hash') then return 'CORRUPT_META' end
     if not has_type(prefix .. 'queue:' .. mode .. ':ready', 'zset') then

@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::{middleware, net};
+use crate::{item, middleware, net};
 
 pub(super) type Occurrences = Arc<Mutex<State>>;
 
@@ -61,6 +61,41 @@ pub(super) fn assign(
 
     for (index, id) in assigned {
         requests[index].assign_id(id);
+    }
+    Ok(reservation)
+}
+
+/// Assigns replay-stable IDs to framework-created Items from one parent Request.
+pub(super) fn assign_items(
+    items: &mut [Box<dyn item::Item>],
+    parent_id: &str,
+    occurrences: &Occurrences,
+) -> Result<Reservation, crate::Error> {
+    let mut reservation = Reservation::new(occurrences.clone());
+    if parent_id.is_empty() {
+        return Ok(reservation);
+    }
+
+    let mut assigned = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if !item.id().is_empty() {
+            continue;
+        }
+
+        let fingerprint = item_fingerprint(item.as_ref())?;
+        let occurrence = reservation.reserve(fingerprint)?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"spider-item-output-v1\0");
+        hasher.update(parent_id.as_bytes());
+        hasher.update([0]);
+        hasher.update(fingerprint);
+        hasher.update(occurrence.to_be_bytes());
+        let id = format!("item_{:x}", hasher.finalize());
+        assigned.push((index, id));
+    }
+
+    for (index, id) in assigned {
+        *items[index].id_mut() = id;
     }
     Ok(reservation)
 }
@@ -142,10 +177,51 @@ fn fingerprint(request: &net::Request) -> Result<[u8; 32], crate::Error> {
         max_retry_count: request.max_retry_count,
     })
     .map_err(|error| crate::Error::message(format!("cannot derive Request ID: {error}")))?;
-    let value = canonicalize(value);
+    let value = canonical_value(value);
     let bytes = serde_json::to_vec(&value)
         .map_err(|error| crate::Error::message(format!("cannot derive Request ID: {error}")))?;
     Ok(Sha256::digest(bytes).into())
+}
+
+fn item_fingerprint(item: &dyn item::Item) -> Result<[u8; 32], crate::Error> {
+    #[derive(Serialize)]
+    struct View<'a> {
+        data: Value,
+        schema: Option<String>,
+        vals: &'a HashMap<String, Value>,
+        middlewares: &'a [middleware::Spec],
+    }
+
+    let data = serde_json::to_value(item)
+        .map_err(|error| crate::Error::message(format!("cannot derive Item ID: {error}")))?;
+    let value = canonical_value(
+        serde_json::to_value(View {
+            data,
+            schema: item.schema().map(|schema| schema.as_hex()),
+            vals: item.vals(),
+            middlewares: item.middlewares(),
+        })
+        .map_err(|error| crate::Error::message(format!("cannot derive Item ID: {error}")))?,
+    );
+    let bytes = serde_json::to_vec(&value)
+        .map_err(|error| crate::Error::message(format!("cannot derive Item ID: {error}")))?;
+    Ok(Sha256::digest(bytes).into())
+}
+
+fn canonical_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.into_iter().map(canonical_value).collect()),
+        Value::Object(values) => {
+            let mut entries = values.into_iter().collect::<Vec<_>>();
+            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            let mut object = Map::with_capacity(entries.len());
+            for (key, value) in entries {
+                object.insert(key, canonical_value(value));
+            }
+            Value::Object(object)
+        }
+        value => value,
+    }
 }
 
 #[derive(Serialize)]
@@ -194,22 +270,6 @@ impl<'a> Body<'a> {
             net::Body::Text(value) => Self::Text(value),
             net::Body::Json(value) => Self::Json(value),
         }
-    }
-}
-
-fn canonicalize(value: Value) -> Value {
-    match value {
-        Value::Array(values) => Value::Array(values.into_iter().map(canonicalize).collect()),
-        Value::Object(values) => {
-            let mut entries = values.into_iter().collect::<Vec<_>>();
-            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-            let mut object = Map::with_capacity(entries.len());
-            for (key, value) in entries {
-                object.insert(key, canonicalize(value));
-            }
-            Value::Object(object)
-        }
-        value => value,
     }
 }
 

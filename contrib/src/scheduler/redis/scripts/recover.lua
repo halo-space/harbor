@@ -78,8 +78,10 @@ if snapshot_max_retry ~= '' then
     trusted_max_retry = parse_i32(snapshot_max_retry, 1, MAX_RETRY_COUNT)
     if not trusted_max_retry then return 'CORRUPT_REQUEST_RETRY' end
 end
-local quarantine = not retry_count or not trusted_max_retry or retry_count >= trusted_max_retry
-local retry = not quarantine and (preserve_retry and retry_count or retry_count + 1) or nil
+local quarantine = not retry_count or not trusted_max_retry
+    or (not require_offline and retry_count >= trusted_max_retry)
+local retry = not quarantine and (require_offline and 0
+    or (preserve_retry and retry_count or retry_count + 1)) or nil
 local priority = nil
 if not quarantine and retry < trusted_max_retry then
     priority = parse_i32(redis.call('HGET', key, 'priority'), -2147483648, 2147483647)
@@ -95,7 +97,7 @@ if not has_type(processing, 'zset') then return 'CORRUPT_PROCESSING' end
 if not has_type(other_processing, 'zset') then return 'CORRUPT_PROCESSING' end
 local reset_failed_workers = not has_type(failed_workers, 'list')
 if not reset_failed_workers
-    and (not retry_count or redis.call('LLEN', failed_workers) > retry_count) then
+    and redis.call('LLEN', failed_workers) > MAX_RETRY_COUNT then
     reset_failed_workers = true
 end
 local reset_completion = not has_type(completion, 'hash')

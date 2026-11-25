@@ -770,8 +770,6 @@ while scan_complete and #claimed < limit do
                 local retry_limit = parse_retry(redis.call('HGET', key, 'retry_limit'))
                 local failed_workers_key = request_key(segment) .. ':failed_workers'
                 local failed_workers_type = storage_type(failed_workers_key)
-                local failed_workers_count = failed_workers_type == 'list'
-                    and redis.call('LLEN', failed_workers_key) or 0
                 local next_time = redis.call('HGET', key, 'next_time')
                 local queue_matches = redis.call('HGET', key, 'queue_kind') == 'ready'
                     and redis.call('HGET', key, 'queue_member') == selected_member
@@ -784,7 +782,6 @@ while scan_complete and #claimed < limit do
                     or retry_limit > MAX_RETRY_COUNT
                     or retry_count >= retry_limit
                     or (failed_workers_type ~= 'none' and failed_workers_type ~= 'list')
-                    or failed_workers_count > retry_count
                     or not next_time
                     or not string.match(next_time, '^%d+$')
                     or #next_time > 19

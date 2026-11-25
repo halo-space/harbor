@@ -772,17 +772,22 @@ spider:
     actions:
       - kind: fill
         selector: "#loginname"
-        value: env:JD_USERNAME
+        value: "$vals.username"
       - kind: fill
         selector: "#nloginpwd"
-        value: env:JD_PASSWORD
+        value: "$vals.password"
       - kind: click
         selector: "#loginsubmit"
       - kind: manual
         timeout: 120000
 ```
 
-All non-empty `selector`, `url`, and `cookie` checks must pass. `value` accepts a literal or `env:NAME`.
+运行本次 Request 前，调用方需要把 `username`、`password` 等敏感值写入 Request `vals`；登录 DSL
+只保存 `$vals.<name>` 引用，不保存凭据本身。
+
+All non-empty `selector`, `url`, and `cookie` checks must pass. Login `value` accepts a non-sensitive literal
+or a `$vals.<name>` reference. The referenced string comes from the current Request `vals`; credentials do not
+come from Worker environment variables.
 Cookies are reused in Worker memory by `login_key + origin`; inject
 `halo::contrib::browser::RedisCookieStore` explicitly when Workers must share them. `ttl` and `refresh_after` are milliseconds.
 Login failures use the existing `error_download.retry`. Browser is headless by default; manual QR or challenge

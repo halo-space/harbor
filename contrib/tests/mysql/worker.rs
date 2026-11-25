@@ -158,7 +158,7 @@ async fn offline_worker_recovery_requeues_claimed_requests() {
     fixture::init(&first).await;
 
     let mut original = fixture::request("worker-recovery-request");
-    original.max_retry_count = 3;
+    original.max_retry_count = 1;
     first
         .push(payload::Payload::new().requests(vec![original]))
         .await
@@ -180,7 +180,7 @@ async fn offline_worker_recovery_requeues_claimed_requests() {
     let recovered = second.next_requests(1).await.unwrap().pop().unwrap();
     assert_eq!(recovered.id, claimed.id);
     assert_eq!(recovered.version, claimed.version + 1);
-    assert_eq!(recovered.retry_count, claimed.retry_count + 1);
+    assert_eq!(recovered.retry_count, 0);
     assert_eq!(recovered.failed_workers, ["worker-a"]);
     assert!(first.success(&fixture::success(&claimed)).await.is_err());
     second.ack(&fixture::processing(&recovered)).await.unwrap();

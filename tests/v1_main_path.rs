@@ -954,10 +954,7 @@ async fn final_item_failure_keeps_complete_local_snapshot() {
         serde_json::from_slice(&tokio::fs::read(&files[0]).await.unwrap()).unwrap();
     assert_eq!(snapshot["id"], "request-1");
     let item_id = snapshot["items"][0]["id"].as_str().unwrap();
-    assert_eq!(
-        uuid::Uuid::parse_str(item_id).unwrap().get_version(),
-        Some(uuid::Version::SortRand)
-    );
+    assert!(item_id.starts_with("item_"));
     assert_eq!(snapshot["items"][0]["data"]["title"], "book");
     assert!(
         snapshot["error"]

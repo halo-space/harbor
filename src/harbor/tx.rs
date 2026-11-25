@@ -137,15 +137,34 @@ impl Tx {
     where
         I: item::Item + 'static,
     {
-        let items = items
+        let context = self.context();
+        let mut items: Vec<Box<dyn item::Item>> = items
             .into_iter()
-            .map(|mut item| {
-                if item.id().is_empty() {
-                    *item.id_mut() = uuid::Uuid::now_v7().to_string();
-                }
-                Box::new(item) as Box<dyn item::Item>
-            })
+            .map(|item| Box::new(item) as Box<dyn item::Item>)
             .collect();
+
+        let ids = context
+            .as_ref()
+            .map(|context| context.assign_item_ids(&mut items))
+            .transpose()?;
+        for item in &mut items {
+            if item.id().is_empty() {
+                *item.id_mut() = uuid::Uuid::now_v7().to_string();
+            }
+        }
+        if let Some(context) = &context {
+            context.retain_unaccepted(&mut items);
+        }
+        if items.is_empty() {
+            if let Some(ids) = ids {
+                ids.commit();
+            }
+            return Ok(());
+        }
+        let item_ids = items
+            .iter()
+            .map(|item| item.id().to_string())
+            .collect::<Vec<_>>();
 
         let permit = self.capacity.acquire().await;
         match self
@@ -153,13 +172,21 @@ impl Tx {
             .send(Event::new(
                 Kind::Items {
                     items,
-                    context: self.context(),
+                    context: context.clone(),
                 },
                 permit,
             ))
             .await
         {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if let Some(context) = &context {
+                    context.mark_items(&item_ids);
+                }
+                if let Some(ids) = ids {
+                    ids.commit();
+                }
+                Ok(())
+            }
             Err(kameo::error::SendError::HandlerError(error)) => {
                 Err(Error::Spider(SpiderError::ItemRejected(error)))
             }

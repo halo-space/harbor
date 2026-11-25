@@ -183,13 +183,15 @@ impl Action {
 }
 
 fn validate_value(value: &str, field: &str) -> Result<(), String> {
-    if let Some(name) = value.strip_prefix("env:")
-        && (name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    if value.starts_with("env:") {
+        return Err(format!(
+            "{field} must use a $vals.<name> reference instead of env:"
+        ));
+    }
+    if let Some(name) = value.strip_prefix("$vals.")
+        && name.trim().is_empty()
     {
-        return Err(format!("{field} has an invalid env reference"));
+        return Err(format!("{field} has an empty vals reference"));
     }
     Ok(())
 }
@@ -217,7 +219,7 @@ check:
 actions:
   - kind: fill
     selector: "#loginname"
-    value: env:JD_USERNAME
+    value: "$vals.username"
   - kind: manual
     timeout: 120000
 "##,
@@ -245,5 +247,24 @@ check: {}
         .unwrap();
 
         assert!(config.validate().unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn rejects_environment_login_values() {
+        let config: Config = serde_yaml::from_str(
+            r##"
+login_key: jd_main
+url: https://passport.jd.com/
+check:
+  selector: ".user-name"
+actions:
+  - kind: fill
+    selector: "#loginname"
+    value: env:JD_USERNAME
+"##,
+        )
+        .unwrap();
+
+        assert!(config.validate().unwrap_err().contains("$vals"));
     }
 }

@@ -110,6 +110,27 @@ impl RetryingRequestSpider {
 }
 
 #[macros::harbor]
+struct RetryingItemSpider {
+    attempts: Arc<AtomicUsize>,
+}
+
+#[macros::harbor]
+impl RetryingItemSpider {
+    fn name(&self) -> &str {
+        "retrying-item"
+    }
+
+    async fn index(&self, _response: net::Response) -> Result<(), halo::harbor::Error> {
+        self.tx.item(vec![TestItem::new()]).await?;
+        self.tx.item(vec![TestItem::new()]).await?;
+        if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(halo::harbor::Error::Message("retry item parse".to_string()));
+        }
+        Ok(())
+    }
+}
+
+#[macros::harbor]
 struct RetryingRulesSpider {
     attempts: Arc<AtomicUsize>,
 }
@@ -981,6 +1002,38 @@ item:
     assert!(called.load(Ordering::SeqCst));
     assert_eq!(engine.scheduler().done_len(), 1);
     tokio::fs::remove_dir_all(dir).await.unwrap();
+}
+
+#[tokio::test]
+async fn code_parse_retry_does_not_duplicate_an_item() {
+    let pushed_requests = Arc::new(Mutex::new(Vec::new()));
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let stored_ids = Arc::new(Mutex::new(Vec::new()));
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let scheduler = RecordingScheduler::new(pushed_requests, records);
+    init_run(&scheduler.inner).await;
+    let request = bound_request("https://example.com/item-retry").with_retry(1, [0]);
+    scheduler
+        .inner
+        .push(payload::Payload::new().requests(vec![request]))
+        .await
+        .unwrap();
+
+    let mut engine = engine::Engine::new()
+        .with_scheduler(scheduler)
+        .with_store(ItemIdsStore {
+            ids: stored_ids.clone(),
+        })
+        .with_downloader(TestDownload)
+        .with_spider(RetryingItemSpider::new(attempts.clone()))
+        .build();
+    engine.start_until_idle().await.unwrap();
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let stored_ids = stored_ids.lock().unwrap();
+    assert_eq!(stored_ids.len(), 2);
+    assert!(stored_ids.iter().all(|id| id.starts_with("item_")));
+    assert_ne!(stored_ids[0], stored_ids[1]);
 }
 
 #[tokio::test]
@@ -2305,6 +2358,10 @@ struct RecordingStore {
     reject: bool,
 }
 
+struct ItemIdsStore {
+    ids: Arc<Mutex<Vec<String>>>,
+}
+
 struct RetryOnceStore {
     attempts: Arc<Mutex<Vec<StoreAttempt>>>,
     fail_next: AtomicBool,
@@ -2355,6 +2412,27 @@ impl Store for RecordingStore {
                 "item submit".to_string(),
             ));
         }
+        Ok(())
+    }
+}
+
+impl Store for ItemIdsStore {
+    async fn open(&self) -> Result<(), halo::harbor::item::Error> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), halo::harbor::item::Error> {
+        Ok(())
+    }
+
+    async fn submit(&self, payload: &payload::Payload) -> Result<(), halo::harbor::item::Error> {
+        payload
+            .validate_store()
+            .map_err(|message| halo::harbor::item::Error::Message(message.to_string()))?;
+        self.ids
+            .lock()
+            .unwrap()
+            .extend(payload.items.iter().map(|item| item.id().to_string()));
         Ok(())
     }
 }

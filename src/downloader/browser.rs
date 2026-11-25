@@ -360,7 +360,14 @@ impl<C: CookieStore> Browser<C> {
         let restore_state_inner = Arc::clone(&restore_state);
         let result = tokio::time::timeout(timeout, async move {
             if let Some(login) = login.as_ref() {
-                ensure_login(&fetch_driver, authenticated, cookies.as_ref(), login).await?;
+                ensure_login(
+                    &fetch_driver,
+                    authenticated,
+                    cookies.as_ref(),
+                    &request.vals,
+                    login,
+                )
+                .await?;
             }
             let url = Url::parse(&request.url)
                 .map_err(|error| downloader::Error::InvalidRedirect(error.to_string()))?;
@@ -690,6 +697,7 @@ async fn ensure_login(
     driver: &WebDriver,
     authenticated: &Mutex<HashMap<String, Instant>>,
     cookies: &impl CookieStore,
+    vals: &HashMap<String, serde_json::Value>,
     config: &crate::harbor::login::Config,
 ) -> Result<(), downloader::Error> {
     let login_url = Url::parse(&config.url)
@@ -731,7 +739,7 @@ async fn ensure_login(
 
     if !login_check(driver, &config.check).await? {
         for action in &config.actions {
-            run_login_action(driver, action).await?;
+            run_login_action(driver, vals, action).await?;
         }
         if !login_check(driver, &config.check).await? {
             return Err(downloader::Error::InvalidConfig(
@@ -795,11 +803,12 @@ async fn login_check(
 
 async fn run_login_action(
     driver: &WebDriver,
+    vals: &HashMap<String, serde_json::Value>,
     action: &crate::harbor::login::Action,
 ) -> Result<(), downloader::Error> {
     match action {
         crate::harbor::login::Action::Fill { selector, value } => {
-            let value = resolve_login_value(value)?;
+            let value = resolve_login_value(value, vals)?;
             let element = driver
                 .query(By::Css(selector.as_str()))
                 .first()
@@ -860,13 +869,26 @@ async fn wait_login_condition(
     }
 }
 
-fn resolve_login_value(value: &str) -> Result<String, downloader::Error> {
-    let Some(name) = value.strip_prefix("env:") else {
+fn resolve_login_value(
+    value: &str,
+    vals: &HashMap<String, serde_json::Value>,
+) -> Result<String, downloader::Error> {
+    let Some(name) = value.strip_prefix("$vals.") else {
+        if value.starts_with("env:") {
+            return Err(downloader::Error::InvalidConfig(
+                "login action values must use $vals.<name>, not env:".to_string(),
+            ));
+        }
         return Ok(value.to_string());
     };
-    std::env::var(name).map_err(|_| {
+    let value = vals.get(name).ok_or_else(|| {
         downloader::Error::InvalidConfig(format!(
-            "login action references missing Worker environment variable: {name}"
+            "login action references missing Request.vals value: {name}"
+        ))
+    })?;
+    value.as_str().map(str::to_string).ok_or_else(|| {
+        downloader::Error::InvalidConfig(format!(
+            "login action Request.vals value must be a string: {name}"
         ))
     })
 }
@@ -1124,5 +1146,23 @@ graph:
         let key = SessionKey::from_request(&request, None, None).unwrap();
 
         assert_eq!(key.login_key.as_deref(), Some("account_a"));
+    }
+
+    #[test]
+    fn login_values_resolve_from_request_vals() {
+        let vals = HashMap::from([(
+            "username".to_string(),
+            serde_json::Value::String("alice".to_string()),
+        )]);
+        assert_eq!(
+            resolve_login_value("$vals.username", &vals).unwrap(),
+            "alice"
+        );
+        assert!(resolve_login_value("$vals.password", &vals).is_err());
+        assert!(resolve_login_value("env:JD_PASSWORD", &vals).is_err());
+        assert_eq!(
+            resolve_login_value("public-label", &vals).unwrap(),
+            "public-label"
+        );
     }
 }

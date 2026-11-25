@@ -217,8 +217,10 @@ impl Snapshot {
                 "Request Snapshot failed_workers must contain unique non-empty values".to_string(),
             );
         }
-        if self.failed_workers.len() > self.retry_count as usize {
-            return Err("Request Snapshot failed_workers cannot exceed retry_count".to_string());
+        if self.failed_workers.len() > MAX_RETRY_COUNT as usize {
+            return Err(format!(
+                "Request Snapshot failed_workers must not exceed {MAX_RETRY_COUNT} entries"
+            ));
         }
         for spec in &self.middlewares {
             crate::middleware::check(spec)

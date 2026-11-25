@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use crate::{net, payload, stats};
+use crate::{item, net, payload, stats};
 
 use super::{Trace, identity};
 
@@ -20,10 +20,17 @@ pub(crate) struct Context {
     attachment: Option<crate::item::attachment::Config>,
     stats: Option<Arc<stats::Delta>>,
     occurrences: identity::Occurrences,
+    item_occurrences: identity::Occurrences,
+    accepted_items: Arc<Mutex<HashSet<String>>>,
+    attempt_items: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Context {
-    fn new(request: &net::Request, stats: Arc<stats::Delta>) -> Self {
+    fn new(
+        request: &net::Request,
+        stats: Arc<stats::Delta>,
+        accepted_items: Arc<Mutex<HashSet<String>>>,
+    ) -> Self {
         Self {
             trace: Trace {
                 task_id: request.task_id.clone(),
@@ -48,6 +55,9 @@ impl Context {
             }),
             stats: Some(stats),
             occurrences: Default::default(),
+            item_occurrences: Default::default(),
+            accepted_items,
+            attempt_items: Default::default(),
         }
     }
 
@@ -74,6 +84,9 @@ impl Context {
             attachment: None,
             stats: None,
             occurrences: Default::default(),
+            item_occurrences: Default::default(),
+            accepted_items: Default::default(),
+            attempt_items: Default::default(),
         }
     }
 
@@ -116,15 +129,50 @@ impl Context {
     ) -> Result<identity::Reservation, crate::Error> {
         identity::assign(requests, &self.id, &self.occurrences)
     }
+
+    pub(crate) fn assign_item_ids(
+        &self,
+        items: &mut [Box<dyn item::Item>],
+    ) -> Result<identity::Reservation, crate::Error> {
+        identity::assign_items(items, &self.id, &self.item_occurrences)
+    }
+
+    pub(crate) fn retain_unaccepted(&self, items: &mut Vec<Box<dyn item::Item>>) {
+        let accepted = self
+            .accepted_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current_attempt = self
+            .attempt_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        items.retain(|item| current_attempt.contains(item.id()) || !accepted.contains(item.id()));
+    }
+
+    pub(crate) fn mark_items(&self, item_ids: &[String]) {
+        let mut accepted = self
+            .accepted_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current_attempt = self
+            .attempt_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        accepted.extend(item_ids.iter().cloned());
+        current_attempt.extend(item_ids.iter().cloned());
+    }
 }
 
 /// Runs one parse execution with its Request context available to Tx.
 pub(crate) async fn scope<T>(
     request: &net::Request,
     stats: Arc<stats::Delta>,
+    accepted_items: Arc<Mutex<HashSet<String>>>,
     execution: impl Future<Output = T>,
 ) -> T {
-    CURRENT.scope(Context::new(request, stats), execution).await
+    CURRENT
+        .scope(Context::new(request, stats, accepted_items), execution)
+        .await
 }
 
 pub(super) fn current() -> Option<Context> {
