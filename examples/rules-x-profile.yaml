@@ -1,4 +1,4 @@
-# Harbor only executes this graph. The daily schedule belongs to Master/Cron, which creates a
+# Harbor only executes this graph. The daily schedule belongs to the external Cron service, which creates a
 # new Trace and runs these account start Requests together.
 spider:
   name: x_public_accounts

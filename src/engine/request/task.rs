@@ -88,8 +88,6 @@ where
                 request.id,
                 request.node_key()
             ));
-        } else {
-            stats.done(request.node_key(), 1);
         }
         payload.stats = stats.snapshot();
         payload

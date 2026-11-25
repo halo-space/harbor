@@ -1,4 +1,4 @@
-# Harbor only executes this graph. The daily schedule is owned by Master/Cron, which creates one
+# Harbor only executes this graph. The daily schedule is owned by the external Cron service, which creates one
 # Task per day. The list endpoint returns JavaScript data, so the list node uses generic regex rules;
 # the detail pages use the Browser Downloader because their tables are rendered by page scripts.
 spider:

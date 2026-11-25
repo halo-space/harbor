@@ -696,7 +696,7 @@ async fn default_validate_filters_response_before_parse_and_records_stats() {
     let records = records.lock().unwrap();
     let stats = counter(&records[0], "index");
     assert_eq!(stats.total, 1);
-    assert_eq!(stats.done, 1);
+    assert_eq!(stats.done, 0);
     assert_eq!(stats.filter, 1);
 }
 

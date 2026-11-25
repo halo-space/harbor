@@ -8,8 +8,7 @@ contract supports local execution and durable Redis or MySQL 9 scheduling.
 ## Highlights
 
 - Code mode and YAML Rules mode share the same Spider, Request, Response, Item, Middleware, and Engine.
-- Memory, Redis, and MySQL Scheduler implementations, plus the Worker-side API Scheduler adapter, use one
-  scheduling contract.
+- Memory, Redis, and MySQL Scheduler implementations use one scheduling contract.
 - HTTP downloading includes retries, bounded bodies, redirects, cookies, proxy/TLS settings, and
   deterministic response decoding.
 - Browser downloading uses `thirtyfour` with Chrome/Chromium, rendered DOM responses, Session cookie
@@ -38,12 +37,12 @@ cargo run -p examples --bin rules
 The examples also include a real fund data graph: `examples/rules-eastmoney-funds-daily.yaml`
 collects the paged ranking plus daily detail pages, while
 `examples/rules-eastmoney-funds-history.yaml` is intended for one initial historical-net-value
-run. The daily/one-time schedule is created by the external Scheduler or Master; the Rules DSL
+run. The daily/one-time schedule is created by the external Scheduler or Cron service; the Rules DSL
 only describes the Request graph.
 
 `halo-harbor-worker` is a generic Worker library. The application assembles it with a concrete
-Scheduler through `Engine::with_scheduler(...)`; Memory, Redis, MySQL, and Master API are
-replaceable Scheduler implementations and are not selected through Worker environment variables.
+Scheduler through `Engine::with_scheduler(...)`; Memory, Redis, and MySQL are replaceable Scheduler
+implementations and are not selected through Worker environment variables.
 Each Scheduler owns its own registration, heartbeat, claiming, recovery, and settlement behavior.
 
 The smallest Engine assembly is:
@@ -67,7 +66,7 @@ replaceable.
 | --- | --- |
 | `halo-harbor` | Core runtime, Engine, Scheduler contracts, HTTP downloader, Rules, selectors, and Item Store |
 | `halo-harbor-macros` | Spider, handler, and Item derive macros |
-| `halo-harbor-contrib` | Redis/MySQL Schedulers, the Worker-side API Scheduler adapter, and distributed middleware implementations |
+| `halo-harbor-contrib` | Redis/MySQL Schedulers and distributed middleware implementations |
 | `halo-harbor-worker` | Generic Worker library that runs the shared Engine with injected Scheduler, Downloader, Spider, Middleware, and Store |
 | `examples` | Executable code-mode and Rules-mode examples |
 

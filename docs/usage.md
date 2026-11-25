@@ -161,56 +161,9 @@ same priority-then-FIFO semantics as Redis. `created_time / updated_time` are `D
 operations and inspection; runtime timestamps such as `lease_time`, `next_time`, and
 `start_time / end_time` remain integer milliseconds across Scheduler implementations.
 
-The MySQL Scheduler connects directly to its DSN database and does not pass through Master. Where
-Workers cannot receive database credentials, use the API Scheduler below and implement the same
-transaction semantics in the separate Master project. Both are replaceable Scheduler assemblies;
-Items still go to the independently configured Worker Store.
-
-## API Scheduler
-
-The API Scheduler owns the same Worker configuration and lifecycle while using its existing HTTP
-transport, namespace, and authentication:
-
-```rust
-use halo::contrib::scheduler::api::Api;
-use halo::harbor::net;
-
-let scheduler = Api::new("https://master.example.com", api_key)?
-    .with_namespace("crawler")?
-    .with_worker_id("worker-01")?
-    .with_worker_host("crawler-node-01")?
-    .with_worker_version("1.0.0")?
-    .with_modes([net::Mode::Http])?;
-```
-
-During `open`, API reads `/v1/worker/policy`, registers through `/v1/worker/register`, and uses the
-server heartbeat interval. Heartbeat and explicit offline use `/v1/worker/heartbeat` and
-`/v1/worker/offline`. Worker-management responses use `{code, message, data}`; `200` succeeds and
-registration code `100` reports an online ID conflict. The server-generated registration token is
-stored and returned on heartbeat/offline requests, but it does not participate in Request claim,
-lease, or settlement identity.
-The policy lease timeout and refresh interval must exactly match the Scheduler's configured lease.
-The API Scheduler adds no configurable byte limit to request bodies sent to the Master or response
-bodies returned by it.
-An unfinished registration key or confirmed token freezes API Scheduler configuration until the
-lifecycle is completed or explicitly closed.
-
-Claim and release use operation-scoped `Idempotency-Key` recovery. A transport error, timeout, or
-successful response that cannot be decoded leaves the result uncertain, so the next claim with the
-same parameters or release with the same lease identity reuses the retained key. A different claim is
-rejected while an earlier claim remains unresolved. A successful result or deterministic failure
-clears the key. Claims are serialized, queued claims recheck Worker liveness, claim replay keeps the
-first operation's monotonic start, and unresolved release keys expire with their lease. API `close()`
-stops and waits for the existing heartbeat task before sending the offline update. If that wait is
-cancelled, another `close()` continues waiting for the same task.
-
-For a batch claim without embedded Trace Snapshots, API recovery reads each cold `trace_id` once and
-loads different Traces concurrently. Trace read, missing, decode, validation, and task/node binding
-errors call `release` only; they do not call `ack` or `failure`, and do not consume a Request retry.
-Only a damaged Request Snapshot or execution state uses `ack + failure`. Recovery and its per-Request
-settlement share a lease handoff deadline, and successfully restored Requests keep the server claim
-order. Release operations are independent, so one failed release does not prevent the remaining claims
-from being returned.
+The MySQL Scheduler connects directly to its DSN database and does not pass through another service.
+Both Redis and MySQL are replaceable Scheduler assemblies; Items still go to the independently
+configured Worker Store.
 
 ## Selectors
 
@@ -556,16 +509,6 @@ fastrace = { version = "0.7.18", default-features = false, features = ["enable"]
 halo = { package = "halo-harbor", path = "..", features = ["runtime-tracing"] }
 ```
 
-When using the API Scheduler, enable `contrib/runtime-tracing` instead. It also enables
-`halo/runtime-tracing` and allows the API Scheduler to propagate tracing context to a trusted
-Master:
-
-```toml
-[dependencies]
-halo = { package = "halo-harbor-contrib", path = "../contrib", features = ["runtime-tracing"] }
-fastrace = { version = "0.7.18", default-features = false, features = ["enable"] }
-```
-
 The Cargo feature alone does not sample Requests. The executable must also install one process-wide
 Reporter and call `with_tracing` for the Engine run. When the feature is disabled, no spans are
 generated even if the program calls `Tracing::all()`; Engine continues through the non-tracing path.
@@ -705,12 +648,6 @@ never persisted in a Request, Trace Snapshot, Payload, Item, failure snapshot, o
 Request/Item Events privately carry the current span context in process so asynchronous output stays
 in the Request trace that produced it. This context is not a public or persisted contract.
 
-In distributed operation, W3C `traceparent` is injected only when a Worker uses
-`halo::contrib::scheduler::api::Api` to call its trusted Master. The framework does not send that header to
-crawl targets, redirect targets, AI providers, or Redis. An API Scheduler call outside an active
-Request context does not synthesize a `traceparent`. Transport retries for one API operation keep the
-same header. Whether Master accepts and exports the context belongs to the separate Master project.
-
 Spans exclude response content, Request bodies, Item content, AI prompts, API keys, cookies, proxy
 credentials, complete URLs, and raw error text. A business identifier is recorded directly only when
 it is no longer than 128 bytes and contains no control character; otherwise it becomes a stable
@@ -722,7 +659,7 @@ fastrace spans only; application logs need their own redaction policy.
 
 Check these conditions in order:
 
-1. The executable was compiled with `halo/runtime-tracing` or `contrib/runtime-tracing`.
+1. The executable was compiled with `halo/runtime-tracing`.
 2. `fastrace::set_reporter(...)` ran before Engine startup. Spans created before Reporter setup are ignored.
 3. The Runtime uses `with_tracing(Tracing::all())` or a nonzero `Tracing::sample(...)` ratio.
 4. Scheduler actually claimed and executed a Request; an empty queue and idle polling produce no `crawler.request`.
@@ -746,10 +683,6 @@ Each Scheduler owns its Worker identity and supported download modes; Engine sup
 concurrency to `open(concurrency)` and a batch size to `next_requests(limit)`. Capability filtering
 must remain atomic with claim. Redis and MySQL are the available
 persistent Scheduler implementations and are covered by the shared Scheduler conformance suite.
-The Worker-side `halo::contrib::scheduler::api::Api` adapter is also implemented. Its corresponding Master
-service is not part of this workspace. This repository maintains only the Worker-side adapter and its
-client-side HTTP contract; a separate project owns the Master service, server-side protocol, database,
-Cron, Control API, frontend, and their design.
 Optional `fastrace` runtime tracing is implemented; the Browser Downloader now uses `thirtyfour` for
 Chrome/Chromium navigation and rendered DOM, and mixed HTTP/browser end-to-end acceptance is implemented. If a
 Browser Request does not specify `User-Agent`, the Worker selects one from the built-in Chrome UA pool for each

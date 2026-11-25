@@ -159,7 +159,10 @@ where
         .await;
 
         match parsing {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                stats.done(claimed.node_key(), 1);
+                return Ok(());
+            }
             Err(crate::Error::Spider(SpiderError::RequestRejected(message))) => {
                 return Err(crate::Error::Scheduler(scheduler::Error::Message(message)));
             }

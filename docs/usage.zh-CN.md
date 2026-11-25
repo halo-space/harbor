@@ -904,7 +904,7 @@ let engine = halo::harbor::engine::Engine::new()
     .build();
 ```
 
-Redis、MySQL 和 Master API Scheduler 通过替换 Scheduler 装配；Spider、Rules 和 Item 配置不需要改变。
+Redis 和 MySQL Scheduler 通过替换 Scheduler 装配；Spider、Rules 和 Item 配置不需要改变。
 
 ```rust
 use halo::contrib::scheduler::redis::Redis;
