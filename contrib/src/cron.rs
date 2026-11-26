@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
 use croner::parser::{CronParser, Seconds};
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, Zoned};
 use thiserror::Error;
 
 const DEFAULT_TIMEZONE: &str = "UTC";
@@ -9,7 +9,7 @@ const DEFAULT_TIMEZONE: &str = "UTC";
 #[derive(Clone, Debug)]
 pub struct Crontab {
     expression: String,
-    timezone: Tz,
+    timezone: TimeZone,
     schedule: croner::Cron,
 }
 
@@ -25,10 +25,9 @@ impl Crontab {
         timezone: impl AsRef<str>,
     ) -> Result<Self, Error> {
         let expression = expression.into();
-        let timezone = timezone
-            .as_ref()
-            .parse::<Tz>()
-            .map_err(|_| Error::Timezone(timezone.as_ref().to_string()))?;
+        let timezone_name = timezone.as_ref();
+        let timezone =
+            TimeZone::get(timezone_name).map_err(|_| Error::Timezone(timezone_name.to_string()))?;
         let parser = CronParser::builder().seconds(Seconds::Disallowed).build();
         let schedule = parser
             .parse(&expression)
@@ -44,13 +43,13 @@ impl Crontab {
         &self.expression
     }
 
-    pub fn timezone(&self) -> Tz {
-        self.timezone
+    pub fn timezone(&self) -> TimeZone {
+        self.timezone.clone()
     }
 
     /// Returns the next execution time after the supplied UTC instant.
-    pub fn next_at(&self, now: DateTime<Utc>) -> Result<DateTime<Tz>, Error> {
-        let local_now = now.with_timezone(&self.timezone);
+    pub fn next_at(&self, now: Timestamp) -> Result<Zoned, Error> {
+        let local_now = now.to_zoned(self.timezone.clone());
         self.schedule
             .find_next_occurrence(&local_now, false)
             .map_err(|error| Error::Next(error.to_string()))
@@ -59,8 +58,9 @@ impl Crontab {
     /// Returns the next execution time as a Unix timestamp in milliseconds.
     pub fn next_time(&self, now_millis: i64) -> Result<i64, Error> {
         let now =
-            DateTime::from_timestamp_millis(now_millis).ok_or(Error::Timestamp(now_millis))?;
-        self.next_at(now).map(|next| next.timestamp_millis())
+            Timestamp::from_millisecond(now_millis).map_err(|_| Error::Timestamp(now_millis))?;
+        self.next_at(now)
+            .map(|next| next.timestamp().as_millisecond())
     }
 }
 
@@ -83,27 +83,30 @@ mod tests {
     #[test]
     fn calculates_next_weekday_in_the_configured_timezone() {
         let schedule = Crontab::with_timezone("0 10 * * 1-5", "Asia/Shanghai").unwrap();
-        let now = DateTime::parse_from_rfc3339("2026-11-13T10:01:00+08:00")
+        let now = "2026-11-13T10:01:00+08:00[Asia/Shanghai]"
+            .parse::<Zoned>()
             .unwrap()
-            .with_timezone(&Utc);
+            .timestamp();
 
         let next = schedule.next_at(now).unwrap();
 
-        assert_eq!(next.to_rfc3339(), "2026-11-16T10:00:00+08:00");
+        assert_eq!(
+            next.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+            "2026-11-16T10:00:00+08:00"
+        );
     }
 
     #[test]
     fn returns_unix_milliseconds_for_task_next_time() {
         let schedule = Crontab::parse("0 0 * * *").unwrap();
-        let now = DateTime::parse_from_rfc3339("2026-11-13T23:59:59.500Z")
-            .unwrap()
-            .timestamp_millis();
+        let now = "2026-11-13T23:59:59.500Z".parse::<Timestamp>().unwrap();
 
         assert_eq!(
-            schedule.next_time(now).unwrap(),
-            DateTime::parse_from_rfc3339("2026-11-14T00:00:00Z")
+            schedule.next_time(now.as_millisecond()).unwrap(),
+            "2026-11-14T00:00:00Z"
+                .parse::<Timestamp>()
                 .unwrap()
-                .timestamp_millis()
+                .as_millisecond()
         );
     }
 

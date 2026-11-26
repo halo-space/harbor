@@ -6,7 +6,7 @@ use std::time::Instant;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::Local;
+use jiff::Zoned;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -92,7 +92,7 @@ impl Writer {
     }
 
     pub(super) fn current_path(&self, task_id: &str) -> PathBuf {
-        let hour = Local::now().format("%Y-%m-%d-%H").to_string();
+        let hour = Zoned::now().strftime("%Y-%m-%d-%H").to_string();
         self.path(task_id, &hour)
     }
 

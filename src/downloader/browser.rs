@@ -12,7 +12,7 @@ use thirtyfour::prelude::{
     By, CapabilitiesHelper, ChromiumLikeCapabilities, DesiredCapabilities, ElementQueryable,
     WebDriver,
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use url::Url;
 
 use crate::{downloader, net};
@@ -27,6 +27,7 @@ struct Session {
     serial: Mutex<()>,
     last_used: Mutex<Instant>,
     authenticated: Mutex<HashMap<String, Instant>>,
+    _slot: OwnedSemaphorePermit,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -157,6 +158,7 @@ pub struct Browser<C = MemoryCookieStore> {
     headless: bool,
     idle_timeout: Duration,
     max_sessions: usize,
+    session_slots: Arc<Semaphore>,
     sessions: RwLock<HashMap<SessionKey, Arc<Session>>>,
     cookies: Arc<C>,
     opened: Mutex<bool>,
@@ -170,6 +172,7 @@ impl Default for Browser<MemoryCookieStore> {
             headless: true,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             max_sessions: DEFAULT_MAX_SESSIONS,
+            session_slots: Arc::new(Semaphore::new(DEFAULT_MAX_SESSIONS)),
             sessions: RwLock::new(HashMap::new()),
             cookies: Arc::new(MemoryCookieStore::default()),
             opened: Mutex::new(false),
@@ -194,6 +197,7 @@ impl<C: CookieStore> Browser<C> {
             headless: self.headless,
             idle_timeout: self.idle_timeout,
             max_sessions: self.max_sessions,
+            session_slots: self.session_slots,
             sessions: self.sessions,
             cookies: Arc::new(cookie_store),
             opened: self.opened,
@@ -232,6 +236,7 @@ impl<C: CookieStore> Browser<C> {
             ));
         }
         self.max_sessions = max_sessions;
+        self.session_slots = Arc::new(Semaphore::new(max_sessions));
         Ok(self)
     }
 
@@ -263,39 +268,35 @@ impl<C: CookieStore> Browser<C> {
             }
         }
 
+        let slot = self.reserve_session_slot().await?;
         let driver = Arc::new(self.create_driver(request).await?);
         let session = Arc::new(Session {
             driver,
             serial: Mutex::new(()),
             last_used: Mutex::new(Instant::now()),
             authenticated: Mutex::new(HashMap::new()),
+            _slot: slot,
         });
         let mut sessions = self.sessions.write().await;
         if let Some(existing) = sessions.get(&key).cloned() {
             let _ = session.driver.as_ref().clone().quit().await;
             return Ok((key, existing));
         }
-        if sessions.len() >= self.max_sessions {
-            let candidate = sessions
-                .iter()
-                .filter_map(|(key, session)| {
-                    let serial = session.serial.try_lock().ok()?;
-                    let last = *session.last_used.try_lock().ok()?;
-                    drop(serial);
-                    Some((key.clone(), session.clone(), last))
-                })
-                .min_by_key(|(_, _, last)| *last);
-            if let Some((old_key, old_session, old_last)) = candidate
-                && let Ok(_serial) = old_session.serial.try_lock()
-            {
-                let current_last = *old_session.last_used.lock().await;
-                if current_last == old_last && sessions.remove(&old_key).is_some() {
-                    let _ = old_session.driver.as_ref().clone().quit().await;
-                }
-            }
-        }
         sessions.insert(key.clone(), session.clone());
         Ok((key, session))
+    }
+
+    async fn reserve_session_slot(&self) -> Result<OwnedSemaphorePermit, downloader::Error> {
+        if let Ok(slot) = Arc::clone(&self.session_slots).try_acquire_owned() {
+            return Ok(slot);
+        }
+
+        self.reap_idle().await;
+        Arc::clone(&self.session_slots)
+            .try_acquire_owned()
+            .map_err(|_| downloader::Error::SessionLimitReached {
+                limit: self.max_sessions,
+            })
     }
 
     async fn create_driver(&self, request: &net::Request) -> Result<WebDriver, downloader::Error> {
@@ -485,9 +486,25 @@ impl<C: CookieStore> Browser<C> {
                 scroll_to_end(&fetch_driver, scroll).await?;
             }
 
+            let limit = request.max_body_bytes.unwrap_or(64 * 1024 * 1024);
+            let rendered_size = fetch_driver
+                .execute(
+                    "return new TextEncoder().encode(document.documentElement.outerHTML).length;",
+                    Vec::new(),
+                )
+                .await
+                .map_err(driver_error)?;
+            let rendered_size = rendered_size.json().as_u64().ok_or_else(|| {
+                downloader::Error::InvalidConfig(
+                    "Browser returned an invalid rendered document size".to_string(),
+                )
+            })?;
+            if rendered_size > limit {
+                return Err(downloader::Error::BodyTooLarge { limit });
+            }
+
             let source = fetch_driver.source().await.map_err(driver_error)?;
             let body = source.into_bytes();
-            let limit = request.max_body_bytes.unwrap_or(64 * 1024 * 1024);
             if body.len() as u64 > limit {
                 return Err(downloader::Error::BodyTooLarge { limit });
             }
@@ -1164,5 +1181,20 @@ graph:
             resolve_login_value("public-label", &vals).unwrap(),
             "public-label"
         );
+    }
+
+    #[tokio::test]
+    async fn browser_session_limit_is_hard_when_all_slots_are_occupied() {
+        let browser = Browser::new().with_max_sessions(1).unwrap();
+        let slot = browser.reserve_session_slot().await.unwrap();
+
+        let error = browser.reserve_session_slot().await.unwrap_err();
+        assert!(matches!(
+            error,
+            downloader::Error::SessionLimitReached { limit: 1 }
+        ));
+
+        drop(slot);
+        assert!(browser.reserve_session_slot().await.is_ok());
     }
 }

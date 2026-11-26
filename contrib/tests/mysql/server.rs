@@ -61,9 +61,9 @@ impl Server {
 
     async fn create_database(&self, label: &str, install_schema: bool) -> Database {
         let name = database_name(label);
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
-        ))
+        )))
         .execute(&self.admin)
         .await
         .unwrap_or_else(|error| panic!("failed to create MySQL test database {name}: {error}"));
@@ -134,9 +134,11 @@ impl Drop for Database {
                 if let Some(pool) = pool {
                     pool.close().await;
                 }
-                let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS `{name}`"))
-                    .execute(&admin)
-                    .await;
+                let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DROP DATABASE IF EXISTS `{name}`"
+                )))
+                .execute(&admin)
+                .await;
             });
         }
     }
@@ -163,10 +165,12 @@ fn database_name(label: &str) -> String {
 }
 
 async fn drop_database(admin: &MySqlPool, name: &str) {
-    sqlx::query(&format!("DROP DATABASE IF EXISTS `{name}`"))
-        .execute(admin)
-        .await
-        .unwrap_or_else(|error| panic!("failed to drop MySQL test database {name}: {error}"));
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS `{name}`"
+    )))
+    .execute(admin)
+    .await
+    .unwrap_or_else(|error| panic!("failed to drop MySQL test database {name}: {error}"));
 }
 
 fn unavailable(url: &str, error: &sqlx::Error, required: bool) -> Option<Server> {

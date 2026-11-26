@@ -35,7 +35,7 @@ pub(super) fn check(
                 "spider.timezone must not be empty when provided".to_string(),
             ));
         }
-        timezone.parse::<chrono_tz::Tz>().map_err(|_| {
+        jiff::tz::TimeZone::get(timezone).map_err(|_| {
             config::Error::Message("spider.timezone must be a valid IANA time zone".to_string())
         })?;
     }

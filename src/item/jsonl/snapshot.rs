@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use chrono::Local;
+use jiff::Zoned;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::fs::OpenOptions;
@@ -129,7 +129,7 @@ impl Session {
     fn new() -> Self {
         Self {
             id: uuid::Uuid::now_v7().simple().to_string(),
-            hour: Local::now().format("%Y-%m-%d-%H").to_string(),
+            hour: Zoned::now().strftime("%Y-%m-%d-%H").to_string(),
         }
     }
 }

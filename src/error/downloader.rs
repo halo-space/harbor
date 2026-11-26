@@ -11,6 +11,9 @@ pub enum Error {
     #[error("invalid HTTP Downloader configuration: {0}")]
     InvalidConfig(String),
 
+    #[error("browser session limit reached ({limit}); no reusable session is available")]
+    SessionLimitReached { limit: usize },
+
     #[error("HTTP download timed out")]
     Timeout,
 

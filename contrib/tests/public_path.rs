@@ -22,5 +22,5 @@ fn cron_uses_the_public_halo_path() {
     let cron = Crontab::with_timezone("0 10 * * 1-5", "Asia/Shanghai").unwrap();
 
     assert_eq!(cron.expression(), "0 10 * * 1-5");
-    assert_eq!(cron.timezone().name(), "Asia/Shanghai");
+    assert_eq!(cron.timezone().iana_name(), Some("Asia/Shanghai"));
 }
