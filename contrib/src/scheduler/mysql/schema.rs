@@ -98,6 +98,7 @@ const COLUMNS: &[Column] = &[
     Column::required("workers", "version", "varchar(191)"),
     Column::required("workers", "modes", "json"),
     Column::required("workers", "concurrency", "int unsigned"),
+    Column::required("workers", "claim_limit", "int unsigned"),
     Column::required("workers", "heartbeat_timeout", "bigint"),
     Column::required("workers", "last_heartbeat", "bigint"),
     Column::required("workers", "token", "varchar(191)"),

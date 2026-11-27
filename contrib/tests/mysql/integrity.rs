@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use harbor::scheduler::Init as _;
-use harbor::{Scheduler as _, payload, trace};
+use harbor::{Scheduler as _, payload};
 use sqlx::Row as _;
 
 use super::{fixture, server};
@@ -79,7 +78,7 @@ async fn request_ids_that_differ_by_trailing_spaces_remain_distinct() {
 }
 
 #[tokio::test]
-async fn missing_trace_is_released_without_consuming_a_retry() {
+async fn missing_trace_consumes_retry_and_reaches_terminal_failure() {
     let Some(server) = server::Server::connect().await else {
         return;
     };
@@ -87,8 +86,10 @@ async fn missing_trace_is_released_without_consuming_a_retry() {
     let scheduler = fixture::scheduler(database.url(), "worker-a");
     fixture::open(&scheduler).await;
     fixture::init(&scheduler).await;
+    let mut request = fixture::request("missing-trace");
+    request.max_retry_count = 1;
     scheduler
-        .push(payload::Payload::new().requests(vec![fixture::request("missing-trace")]))
+        .push(payload::Payload::new().requests(vec![request]))
         .await
         .unwrap();
 
@@ -100,7 +101,7 @@ async fn missing_trace_is_released_without_consuming_a_retry() {
 
     let claimed = tokio::time::timeout(Duration::from_secs(1), scheduler.next_requests(1))
         .await
-        .expect("claim repeatedly selected the released Request")
+        .expect("claim did not finish terminally")
         .unwrap();
     assert!(claimed.is_empty());
 
@@ -110,8 +111,8 @@ async fn missing_trace_is_released_without_consuming_a_retry() {
             .fetch_one(database.pool())
             .await
             .unwrap();
-    assert_eq!(row.try_get::<u8, _>("state").unwrap(), 0);
-    assert_eq!(row.try_get::<i32, _>("retry_count").unwrap(), 0);
+    assert_eq!(row.try_get::<u8, _>("state").unwrap(), 3);
+    assert_eq!(row.try_get::<i32, _>("retry_count").unwrap(), 1);
     assert_eq!(utf8(&row, "leased_by"), "");
     assert_eq!(row.try_get::<i64, _>("lease_time").unwrap(), 0);
     let failed_workers =
@@ -120,27 +121,7 @@ async fn missing_trace_is_released_without_consuming_a_retry() {
             .fetch_one(database.pool())
             .await
             .unwrap();
-    assert_eq!(failed_workers, 0);
-
-    scheduler
-        .init(
-            fixture::TRACE_ID.to_string(),
-            trace::Snapshot::code(fixture::TASK_ID),
-            Vec::new(),
-        )
-        .await
-        .unwrap();
-    let repaired = scheduler.next_requests(1).await.unwrap().pop().unwrap();
-    assert_eq!(repaired.id, "missing-trace");
-    assert_eq!(repaired.retry_count, 0);
-    scheduler
-        .ack(&fixture::processing(&repaired))
-        .await
-        .unwrap();
-    scheduler
-        .success(&fixture::success(&repaired))
-        .await
-        .unwrap();
+    assert_eq!(failed_workers, 1);
 
     scheduler.close().await.unwrap();
     database.remove().await;

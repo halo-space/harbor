@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use harbor::{net, scheduler};
@@ -13,6 +13,7 @@ use super::error::{database_number, sqlx as sql_error};
 
 pub(super) const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 pub(super) const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const DEFAULT_CLAIM_LIMIT: usize = 5;
 
 #[derive(Debug)]
 struct Config {
@@ -20,6 +21,7 @@ struct Config {
     host: Option<String>,
     version: Option<String>,
     modes: Vec<net::Mode>,
+    claim_limit: usize,
     heartbeat_interval: Duration,
     heartbeat_timeout: Duration,
 }
@@ -31,6 +33,7 @@ impl Default for Config {
             host: None,
             version: None,
             modes: vec![net::Mode::Http],
+            claim_limit: DEFAULT_CLAIM_LIMIT,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
         }
@@ -40,6 +43,7 @@ impl Default for Config {
 pub(super) struct Worker {
     config: Config,
     can_claim: Arc<AtomicBool>,
+    claim_limit: Arc<AtomicUsize>,
     runtime: std::sync::Mutex<Runtime>,
 }
 
@@ -82,6 +86,7 @@ impl Heartbeat {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.can_claim.store(false, Ordering::Release);
+        self.claim_limit.store(0, Ordering::Release);
         let runtime = self
             .runtime
             .get_mut()
@@ -98,6 +103,7 @@ impl Worker {
         Self {
             config: Config::default(),
             can_claim: Arc::new(AtomicBool::new(false)),
+            claim_limit: Arc::new(AtomicUsize::new(0)),
             runtime: std::sync::Mutex::new(Runtime::default()),
         }
     }
@@ -161,6 +167,16 @@ impl Worker {
         Ok(())
     }
 
+    pub(super) fn set_claim_limit(&mut self, limit: usize) -> Result<(), scheduler::Error> {
+        if limit == 0 {
+            return Err(scheduler::Error::Message(
+                "worker claim limit must be positive".to_string(),
+            ));
+        }
+        self.config.claim_limit = limit;
+        Ok(())
+    }
+
     pub(super) fn id(&self) -> Result<&str, scheduler::Error> {
         self.config
             .id
@@ -185,6 +201,11 @@ impl Worker {
         self.runtime().concurrency
     }
 
+    pub(super) fn claim_limit(&self, configured: usize) -> usize {
+        let limit = self.claim_limit.load(Ordering::Acquire);
+        if limit == 0 { configured } else { limit }
+    }
+
     pub(super) fn validate(&self, concurrency: usize) -> Result<(), scheduler::Error> {
         if concurrency == 0 {
             return Err(scheduler::Error::Message(
@@ -192,6 +213,7 @@ impl Worker {
             ));
         }
         database_concurrency(concurrency)?;
+        database_claim_limit(self.config.claim_limit)?;
         self.id()?;
         if self.config.host.is_none() {
             return Err(missing("worker_host"));
@@ -215,7 +237,7 @@ impl Worker {
     ) -> Result<(bool, i64), scheduler::Error> {
         let worker_id = self.id()?;
         let row = sqlx::query(
-            "SELECT host, version, modes, concurrency, heartbeat_timeout, last_heartbeat, \
+            "SELECT host, version, modes, concurrency, claim_limit, heartbeat_timeout, last_heartbeat, \
                     token, offline_time \
              FROM workers WHERE worker_id = ? FOR SHARE",
         )
@@ -237,11 +259,13 @@ impl Worker {
         let expected_modes = serde_json::to_value(&self.config.modes)
             .map_err(|error| scheduler::Error::Message(error.to_string()))?;
         let concurrency = row.try_get::<u32, _>("concurrency").map_err(sql_error)?;
+        let claim_limit = row.try_get::<u32, _>("claim_limit").map_err(sql_error)?;
         if host.is_empty()
             || version.is_empty()
             || token.is_empty()
             || modes != expected_modes
             || concurrency == 0
+            || claim_limit == 0
         {
             return Err(scheduler::Error::Message(
                 "stored MySQL Worker metadata is incomplete or incompatible".to_string(),
@@ -292,11 +316,12 @@ impl Worker {
             .map_err(|error| scheduler::Error::Message(error.to_string()))?;
         let concurrency_value = database_concurrency(concurrency)?;
         let heartbeat_timeout = milliseconds("heartbeat timeout", self.config.heartbeat_timeout)?;
+        let configured_claim_limit = database_claim_limit(self.config.claim_limit)?;
         let open_key = self.open_key(concurrency)?;
         let token = registration_token(&worker_id, &open_key);
         let mut transaction = pool.begin().await.map_err(sql_error)?;
         let existing = sqlx::query(
-            "SELECT host, version, modes, concurrency, heartbeat_timeout, \
+            "SELECT host, version, modes, concurrency, claim_limit, heartbeat_timeout, \
                     last_heartbeat, token, offline_time \
              FROM workers WHERE worker_id = ? FOR UPDATE",
         )
@@ -306,8 +331,16 @@ impl Worker {
         .map_err(sql_error)?;
         let now = database_time(&mut transaction).await?;
 
+        let mut claim_limit = configured_claim_limit;
         if let Some(row) = existing {
             let stored_token = decode::string(&row, "token")?;
+            let stored_claim_limit = row.try_get::<u32, _>("claim_limit").map_err(sql_error)?;
+            if stored_claim_limit == 0 {
+                return Err(scheduler::Error::Message(
+                    "stored MySQL Worker claim limit is invalid".to_string(),
+                ));
+            }
+            claim_limit = stored_claim_limit;
             if stored_token == token {
                 let stored_host = decode::string(&row, "host")?;
                 let stored_version = decode::string(&row, "version")?;
@@ -339,7 +372,17 @@ impl Worker {
                 .await
                 .map_err(sql_error)?;
                 transaction.commit().await.map_err(sql_error)?;
-                self.confirm_started(pool.clone(), worker_id, token, concurrency);
+                self.confirm_started(
+                    pool.clone(),
+                    worker_id,
+                    token,
+                    concurrency,
+                    usize::try_from(claim_limit).map_err(|_| {
+                        scheduler::Error::Message(
+                            "stored MySQL Worker claim limit exceeds usize range".to_string(),
+                        )
+                    })?,
+                );
                 return Ok(());
             }
 
@@ -366,7 +409,7 @@ impl Worker {
 
         let result = sqlx::query(
             "INSERT INTO workers \
-             (worker_id, host, ip, version, modes, concurrency, heartbeat_timeout, \
+             (worker_id, host, ip, version, modes, concurrency, claim_limit, heartbeat_timeout, \
               last_heartbeat, token, offline_time, created_time, updated_time) \
              VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, \
                      CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))",
@@ -376,6 +419,7 @@ impl Worker {
         .bind(version)
         .bind(modes)
         .bind(concurrency_value)
+        .bind(database_claim_limit(self.config.claim_limit)?)
         .bind(heartbeat_timeout)
         .bind(now)
         .bind(&token)
@@ -388,7 +432,17 @@ impl Worker {
             return Err(sql_error(error));
         }
         transaction.commit().await.map_err(sql_error)?;
-        self.confirm_started(pool.clone(), worker_id, token, concurrency);
+        self.confirm_started(
+            pool.clone(),
+            worker_id,
+            token,
+            concurrency,
+            usize::try_from(claim_limit).map_err(|_| {
+                scheduler::Error::Message(
+                    "stored MySQL Worker claim limit exceeds usize range".to_string(),
+                )
+            })?,
+        );
         Ok(())
     }
 
@@ -398,6 +452,7 @@ impl Worker {
         worker_id: String,
         token: String,
         concurrency: usize,
+        claim_limit: usize,
     ) {
         let heartbeat = start_heartbeat(
             pool,
@@ -405,12 +460,14 @@ impl Worker {
             worker_id,
             token.clone(),
             self.config.heartbeat_interval,
+            self.claim_limit.clone(),
         );
         let mut runtime = self.runtime();
         drop(runtime.heartbeat.replace(heartbeat));
         runtime.open_key = None;
         runtime.concurrency = Some(concurrency);
         runtime.token = Some(token);
+        self.claim_limit.store(claim_limit, Ordering::Release);
         self.can_claim.store(true, Ordering::Release);
     }
 
@@ -456,6 +513,7 @@ impl Worker {
 
     pub(super) fn reset(&self) {
         self.can_claim.store(false, Ordering::Release);
+        self.claim_limit.store(0, Ordering::Release);
         let mut runtime = self.runtime();
         runtime.open_key = None;
         runtime.concurrency = None;
@@ -492,6 +550,7 @@ fn start_heartbeat(
     worker_id: String,
     token: String,
     interval: Duration,
+    claim_limit: Arc<AtomicUsize>,
 ) -> Heartbeat {
     let (stop, mut stopping) = watch::channel(false);
     let (ended, stopped) = watch::channel(false);
@@ -533,6 +592,28 @@ fn start_heartbeat(
             });
             match result {
                 Ok(()) => {
+                    let stored_limit = sqlx::query_scalar::<_, u32>(
+                        "SELECT claim_limit FROM workers WHERE worker_id = ? AND token = ? \
+                         AND offline_time IS NULL",
+                    )
+                    .bind(&worker_id)
+                    .bind(&token)
+                    .fetch_optional(&pool)
+                    .await;
+                    let Ok(Some(stored_limit)) = stored_limit else {
+                        can_claim.store(false, Ordering::Release);
+                        tracing::warn!(
+                            worker_id = %worker_id,
+                            "MySQL Worker claim limit refresh failed"
+                        );
+                        continue;
+                    };
+                    if stored_limit == 0 {
+                        can_claim.store(false, Ordering::Release);
+                        tracing::warn!(worker_id = %worker_id, "MySQL Worker claim limit is invalid");
+                        continue;
+                    }
+                    claim_limit.store(stored_limit as usize, Ordering::Release);
                     if !can_claim.swap(true, Ordering::AcqRel) {
                         tracing::info!(worker_id = %worker_id, "MySQL Worker heartbeat recovered");
                     }
@@ -584,6 +665,14 @@ fn database_concurrency(value: usize) -> Result<u32, scheduler::Error> {
     u32::try_from(value).map_err(|_| {
         scheduler::Error::Message(
             "worker concurrency exceeds the MySQL unsigned integer range".to_string(),
+        )
+    })
+}
+
+fn database_claim_limit(value: usize) -> Result<u32, scheduler::Error> {
+    u32::try_from(value).map_err(|_| {
+        scheduler::Error::Message(
+            "worker claim limit exceeds the MySQL unsigned integer range".to_string(),
         )
     })
 }

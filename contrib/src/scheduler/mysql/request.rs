@@ -166,7 +166,6 @@ impl MySql {
         let (http, browser) = supported_modes(modes);
         let mut requests = Vec::with_capacity(limit);
         let mut traces = HashMap::<String, Arc<trace::Snapshot>>::new();
-        let mut trace_releases = Vec::new();
         // Advance after every inspected priority/FIFO position so an exact
         // Request lock can skip contention without revisiting the same prefix.
         let mut cursor = None;
@@ -284,9 +283,6 @@ impl MySql {
                 };
                 match restore(&claimed, &mut traces) {
                     Ok(request) => requests.push(request),
-                    Err(error) if is_trace_error(&error) => {
-                        trace_releases.push((claimed, error));
-                    }
                     Err(error) => {
                         let retry_limit = snapshot_retry_limit(&claimed);
                         recover_claim(&mut transaction, &claimed, error.to_string(), retry_limit)
@@ -296,22 +292,8 @@ impl MySql {
             }
         }
 
-        for (claimed, _) in &trace_releases {
-            release_claim(&mut transaction, claimed).await?;
-        }
         refresh_claimed_leases(&mut transaction, &mut requests, worker_id).await?;
         transaction.commit().await.map_err(sql_error)?;
-        for (claimed, error) in trace_releases {
-            tracing::warn!(
-                request_id = %claimed.id,
-                task_id = %claimed.task_id,
-                trace_id = %claimed.trace_id,
-                version = claimed.version,
-                worker_id = %claimed.leased_by,
-                error = %error,
-                "MySQL Request Trace restoration failed; Request returned to queue"
-            );
-        }
         Ok(requests)
     }
 
@@ -909,13 +891,6 @@ fn restore(
     Ok(request)
 }
 
-fn is_trace_error(error: &scheduler::Error) -> bool {
-    matches!(
-        error,
-        scheduler::Error::TraceNotFound(_) | scheduler::Error::InvalidTrace { .. }
-    )
-}
-
 fn validate_trace_binding(
     snapshot: &net::request::Snapshot,
     trace: &trace::Snapshot,
@@ -939,27 +914,6 @@ fn validate_trace_binding(
         });
     }
     Ok(())
-}
-
-async fn release_claim(
-    transaction: &mut Transaction<'_, SqlMySql>,
-    claimed: &Claimed,
-) -> Result<(), scheduler::Error> {
-    let released = sqlx::query(
-        "UPDATE requests SET state = 0, next_time = 0, leased_by = '', lease_time = 0, \
-                ack_version = NULL, updated_time = CURRENT_TIMESTAMP(3) \
-         WHERE id = ? AND state = 1 AND version = ? AND leased_by = ?",
-    )
-    .bind(&claimed.id)
-    .bind(claimed.version)
-    .bind(&claimed.leased_by)
-    .execute(&mut **transaction)
-    .await
-    .map_err(sql_error)?;
-    if released.rows_affected() != 1 {
-        return Err(scheduler::Error::StateMismatch(claimed.id.clone()));
-    }
-    enqueue_values(transaction, &claimed.id, &claimed.mode, claimed.priority, 0).await
 }
 
 async fn recover_claim(

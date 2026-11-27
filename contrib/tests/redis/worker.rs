@@ -37,9 +37,10 @@ async fn registration_stores_worker_metadata_and_close_marks_it_offline() {
     assert_eq!(registered["version"], "1.0.0");
     assert_eq!(registered["modes"], r#"["http","browser"]"#);
     assert_eq!(registered["concurrency"], "7");
+    assert_eq!(registered["claim_limit"], "5");
     assert_eq!(registered["heartbeat_timeout"], "200");
     assert_eq!(registered["offline_time"], "");
-    assert_eq!(registered.len(), 10);
+    assert_eq!(registered.len(), 11);
     let created_time = registered["created_time"].parse::<i64>().unwrap();
     assert!(registered["last_heartbeat"].parse::<i64>().unwrap() >= created_time);
     assert!(!registered["token"].is_empty());
@@ -71,6 +72,24 @@ async fn registration_stores_worker_metadata_and_close_marks_it_offline() {
             .unwrap(),
         token
     );
+
+    redis::cmd("HSET")
+        .arg(&worker_key)
+        .arg("claim_limit")
+        .arg(10)
+        .query_async::<usize>(&mut connection)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if scheduler.claim_limit(3) == 10 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Redis Worker heartbeat did not refresh claim_limit");
 
     scheduler.close().await.unwrap();
     let offline = redis::cmd("HGETALL")
@@ -122,6 +141,7 @@ async fn replaying_one_registration_uses_the_same_token_without_extra_worker_fie
         .arg("1.0.0")
         .arg(r#"["http"]"#)
         .arg(4)
+        .arg(5)
         .arg(30_000)
         .arg("open-attempt-1")
         .invoke_async::<(i64, String, String)>(&mut connection)
@@ -152,6 +172,7 @@ async fn replaying_one_registration_uses_the_same_token_without_extra_worker_fie
         .arg("1.0.0")
         .arg(r#"["http"]"#)
         .arg(4)
+        .arg(5)
         .arg(30_000)
         .arg("open-attempt-1")
         .invoke_async::<(i64, String, String)>(&mut connection)
@@ -165,7 +186,7 @@ async fn replaying_one_registration_uses_the_same_token_without_extra_worker_fie
         .await
         .unwrap();
     assert_eq!(worker["created_time"], created_time);
-    assert_eq!(worker.len(), 10);
+    assert_eq!(worker.len(), 11);
     assert!(!worker.contains_key("open_key"));
     assert!(!worker.contains_key("state"));
 
@@ -177,6 +198,7 @@ async fn replaying_one_registration_uses_the_same_token_without_extra_worker_fie
         .arg("1.0.0")
         .arg(r#"["http"]"#)
         .arg(4)
+        .arg(5)
         .arg(30_000)
         .arg("open-attempt-2")
         .invoke_async::<(i64, String, String)>(&mut connection)
@@ -281,10 +303,10 @@ async fn a_timed_out_worker_id_can_register_again() {
     .key(&worker_key)
     .arg(A)
     .arg(&first_token)
-    .invoke_async::<String>(&mut connection)
+    .invoke_async::<(String, i64)>(&mut connection)
     .await
     .unwrap();
-    assert_eq!(stale_heartbeat, "WORKER_TOKEN_MISMATCH");
+    assert_eq!(stale_heartbeat.0, "WORKER_TOKEN_MISMATCH");
 
     first.close().await.unwrap();
     let after_stale_close = redis::cmd("HGETALL")
@@ -359,6 +381,8 @@ async fn heartbeat_failure_pauses_new_claims_until_it_recovers() {
         .arg(r#"["http"]"#)
         .arg("concurrency")
         .arg(4)
+        .arg("claim_limit")
+        .arg(5)
         .arg("token")
         .arg(token)
         .arg("heartbeat_timeout")
@@ -470,6 +494,11 @@ async fn corrupted_registration_is_not_reported_as_an_empty_claim() {
         (
             "missing-concurrency",
             Corruption::Remove("concurrency"),
+            "CORRUPT_WORKER_METADATA",
+        ),
+        (
+            "missing-claim-limit",
+            Corruption::Remove("claim_limit"),
             "CORRUPT_WORKER_METADATA",
         ),
         (

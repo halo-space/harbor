@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use halo::contrib::scheduler::redis::Redis;
+use halo_harbor_contrib::scheduler::redis::Redis;
 use harbor::Scheduler;
 
 const DEFAULT_URL: &str = "redis://127.0.0.1:6379";

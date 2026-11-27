@@ -8,9 +8,6 @@ description = "Redis, MySQL, and distributed middleware implementations for Harb
 repository = "https://github.com/halo-space/harbor"
 readme = "../README.md"
 
-[lib]
-name = "halo"
-
 [features]
 default = []
 runtime-tracing = ["dep:fastrace", "fastrace/enable", "harbor/runtime-tracing"]

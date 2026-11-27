@@ -112,6 +112,12 @@ impl Redis {
         Ok(self)
     }
 
+    pub fn with_claim_limit(mut self, limit: usize) -> Result<Self, scheduler::Error> {
+        self.require_configurable()?;
+        self.worker.set_claim_limit(limit)?;
+        Ok(self)
+    }
+
     fn require_configurable(&self) -> Result<(), scheduler::Error> {
         if self.opened.load(Ordering::Acquire) || !self.worker.is_configurable() {
             Err(scheduler::Error::Message(
@@ -186,6 +192,10 @@ impl Redis {
 impl scheduler::Scheduler for Redis {
     fn lease(&self) -> Option<scheduler::Lease> {
         Some(self.lease)
+    }
+
+    fn claim_limit(&self, configured: usize) -> usize {
+        self.worker.claim_limit(configured)
     }
 
     async fn open(&self, concurrency: usize) -> Result<(), scheduler::Error> {

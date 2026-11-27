@@ -4,10 +4,12 @@ local host = ARGV[2]
 local version = ARGV[3]
 local modes = ARGV[4]
 local concurrency = ARGV[5]
-local timeout = tonumber(ARGV[6])
-local open_key = ARGV[7]
+local claim_limit = ARGV[6]
+local timeout = tonumber(ARGV[7])
+local open_key = ARGV[8]
 
-if not timeout or timeout <= 0 or not open_key or open_key == '' then
+if not tonumber(claim_limit) or tonumber(claim_limit) <= 0 or not timeout or timeout <= 0
+    or not open_key or open_key == '' then
     return {500, 'Worker registration input is invalid', ''}
 end
 
@@ -24,18 +26,20 @@ if kind == 'hash' then
     local stored_token = redis.call('HGET', key, 'token')
     if stored_token == token then
         local stored = redis.call('HMGET', key,
-            'worker_id', 'host', 'version', 'modes', 'concurrency', 'heartbeat_timeout',
-            'last_heartbeat', 'offline_time', 'created_time')
-        local stored_timeout = tonumber(stored[6])
-        local stored_heartbeat = tonumber(stored[7])
-        local stored_offline = stored[8] ~= '' and tonumber(stored[8]) or nil
-        local stored_created = tonumber(stored[9])
+            'worker_id', 'host', 'version', 'modes', 'concurrency', 'claim_limit',
+            'heartbeat_timeout', 'last_heartbeat', 'offline_time', 'created_time')
+        local stored_claim_limit = tonumber(stored[6])
+        local stored_timeout = tonumber(stored[7])
+        local stored_heartbeat = tonumber(stored[8])
+        local stored_offline = stored[9] ~= '' and tonumber(stored[9]) or nil
+        local stored_created = tonumber(stored[10])
         if stored[1] ~= worker_id or stored[2] ~= host or stored[3] ~= version
-            or stored[4] ~= modes or stored[5] ~= concurrency
+            or stored[4] ~= modes or stored[5] ~= concurrency or not stored_claim_limit
+            or stored_claim_limit <= 0
             or stored_timeout ~= timeout
             or not stored_heartbeat or stored_heartbeat < 0 or stored_heartbeat > now
-            or stored[8] == false
-            or (stored[8] ~= '' and (not stored_offline or stored_offline <= 0 or stored_offline > now))
+            or stored[9] == false
+            or (stored[9] ~= '' and (not stored_offline or stored_offline <= 0 or stored_offline > now))
             or not stored_created or stored_created <= 0 or stored_created > now then
             return {500, 'stored Worker does not match the registration replay', ''}
         end
@@ -48,11 +52,12 @@ if kind == 'hash' then
             'version', version,
             'modes', modes,
             'concurrency', concurrency,
+            'claim_limit', stored[6],
             'heartbeat_timeout', timeout,
             'last_heartbeat', now_text,
             'token', token,
             'offline_time', '',
-            'created_time', stored[9])
+            'created_time', stored[10])
         return {200, 'success', token}
     end
 
@@ -69,6 +74,10 @@ if kind == 'hash' then
     end
 end
 
+local previous_claim_limit = tonumber(redis.call('HGET', key, 'claim_limit'))
+if not previous_claim_limit or previous_claim_limit <= 0 then
+    previous_claim_limit = tonumber(claim_limit)
+end
 redis.call('DEL', key)
 redis.call('HSET', key,
     'worker_id', worker_id,
@@ -76,6 +85,7 @@ redis.call('HSET', key,
     'version', version,
     'modes', modes,
     'concurrency', concurrency,
+    'claim_limit', previous_claim_limit,
     'heartbeat_timeout', timeout,
     'last_heartbeat', now_text,
     'token', token,

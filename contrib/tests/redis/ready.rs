@@ -1,4 +1,4 @@
-use halo::contrib::scheduler::redis::Redis;
+use halo_harbor_contrib::scheduler::redis::Redis;
 use harbor::{Scheduler, net, payload};
 
 use super::{key, request, server, settlement, worker};

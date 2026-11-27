@@ -12,6 +12,7 @@ use super::script::Scripts;
 
 pub(super) const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 pub(super) const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const DEFAULT_CLAIM_LIMIT: usize = 5;
 
 #[derive(Debug)]
 struct Config {
@@ -19,6 +20,7 @@ struct Config {
     host: Option<String>,
     version: Option<String>,
     modes: Vec<net::Mode>,
+    claim_limit: usize,
     heartbeat_interval: Duration,
     heartbeat_timeout: Duration,
 }
@@ -30,6 +32,7 @@ impl Default for Config {
             host: None,
             version: None,
             modes: vec![net::Mode::Http],
+            claim_limit: DEFAULT_CLAIM_LIMIT,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
         }
@@ -39,6 +42,7 @@ impl Default for Config {
 pub(super) struct Worker {
     config: Config,
     can_claim: Arc<AtomicBool>,
+    claim_limit: Arc<std::sync::atomic::AtomicUsize>,
     runtime: std::sync::Mutex<Runtime>,
 }
 
@@ -64,6 +68,7 @@ struct HeartbeatTask {
     token: String,
     interval: Duration,
     can_claim: Arc<AtomicBool>,
+    claim_limit: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Heartbeat {
@@ -95,6 +100,7 @@ impl Drop for HeartbeatEnd {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.can_claim.store(false, Ordering::Release);
+        self.claim_limit.store(0, Ordering::Release);
         let runtime = self
             .runtime
             .get_mut()
@@ -111,6 +117,7 @@ impl Worker {
         Self {
             config: Config::default(),
             can_claim: Arc::new(AtomicBool::new(false)),
+            claim_limit: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             runtime: std::sync::Mutex::new(Runtime::default()),
         }
     }
@@ -177,6 +184,16 @@ impl Worker {
         Ok(())
     }
 
+    pub(super) fn set_claim_limit(&mut self, limit: usize) -> Result<(), scheduler::Error> {
+        if limit == 0 {
+            return Err(scheduler::Error::Message(
+                "worker claim limit must be positive".to_string(),
+            ));
+        }
+        self.config.claim_limit = limit;
+        Ok(())
+    }
+
     pub(super) fn id(&self) -> Result<&str, scheduler::Error> {
         self.config
             .id
@@ -229,6 +246,7 @@ impl Worker {
             .arg(version)
             .arg(modes)
             .arg(concurrency)
+            .arg(self.config.claim_limit)
             .arg(timeout)
             .arg(open_key)
             .invoke_async(connection)
@@ -250,6 +268,7 @@ impl Worker {
             token: token.clone(),
             interval: self.config.heartbeat_interval,
             can_claim: self.can_claim.clone(),
+            claim_limit: self.claim_limit.clone(),
         };
         let heartbeat = Heartbeat {
             stop,
@@ -264,12 +283,15 @@ impl Worker {
         runtime.open_key = None;
         runtime.concurrency = Some(concurrency);
         runtime.token = Some(token);
+        self.claim_limit
+            .store(self.config.claim_limit, Ordering::Release);
         self.can_claim.store(true, Ordering::Release);
         Ok(())
     }
 
     pub(super) async fn stop_heartbeat(&self) {
         self.can_claim.store(false, Ordering::Release);
+        self.claim_limit.store(0, Ordering::Release);
         let Some(mut stopped) = self.runtime().heartbeat.as_ref().map(Heartbeat::stop) else {
             return;
         };
@@ -302,7 +324,7 @@ impl Worker {
             .invoke_async(connection)
             .await
             .map_err(redis_error)?;
-        worker_result(status)
+        worker_status(&status)
     }
 
     pub(super) fn reset(&self) {
@@ -345,6 +367,11 @@ impl Worker {
 
     pub(super) fn concurrency(&self) -> Option<usize> {
         self.runtime().concurrency
+    }
+
+    pub(super) fn claim_limit(&self, configured: usize) -> usize {
+        let limit = self.claim_limit.load(Ordering::Acquire);
+        if limit == 0 { configured } else { limit }
     }
 
     #[cfg(test)]
@@ -397,15 +424,16 @@ impl HeartbeatTask {
                 .key(&self.key)
                 .arg(&self.id)
                 .arg(&self.token)
-                .invoke_async::<String>(&mut self.connection)
+                .invoke_async::<(String, i64)>(&mut self.connection)
                 .await
                 .map_err(redis_error)
-                .and_then(worker_result);
+                .and_then(|(status, claim_limit)| worker_result(status, claim_limit));
             if *stop.borrow() {
                 return;
             }
             match result {
-                Ok(()) => {
+                Ok(claim_limit) => {
+                    self.claim_limit.store(claim_limit, Ordering::Release);
                     if !self.can_claim.swap(true, Ordering::AcqRel) {
                         tracing::info!(worker_id = %self.id, "Redis Worker heartbeat recovered");
                     }
@@ -419,8 +447,8 @@ impl HeartbeatTask {
     }
 }
 
-fn worker_result(status: String) -> Result<(), scheduler::Error> {
-    match status.as_str() {
+fn worker_status(status: &str) -> Result<(), scheduler::Error> {
+    match status {
         "OK" => Ok(()),
         "WORKER_NOT_FOUND" => Err(scheduler::Error::Message(
             "Redis Worker registration was not found".to_string(),
@@ -444,6 +472,20 @@ fn worker_result(status: String) -> Result<(), scheduler::Error> {
             "Redis Worker operation failed: {status}"
         ))),
     }
+}
+
+fn worker_result(status: String, claim_limit: i64) -> Result<usize, scheduler::Error> {
+    if status == "OK" {
+        if claim_limit <= 0 {
+            return Err(scheduler::Error::Message(
+                "Redis Worker returned an invalid claim limit".to_string(),
+            ));
+        }
+        return usize::try_from(claim_limit).map_err(|_| {
+            scheduler::Error::Message("Redis Worker claim limit exceeds usize range".to_string())
+        });
+    }
+    worker_status(&status).map(|()| unreachable!("worker_status accepts only OK here"))
 }
 
 fn required(field: &str, value: String) -> Result<String, scheduler::Error> {

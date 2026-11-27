@@ -134,7 +134,7 @@ where
     /// Starts eligible work and reports when a requested or error-driven shutdown has drained.
     fn advance(&mut self, actor_ref: &ActorRef<Self>) -> bool {
         let claim_limit = self.scheduler.claim_limit(self.config.claim_limit).max(1);
-        let capacity = self.config.concurrency.max(claim_limit);
+        let capacity = self.config.concurrency;
         if self.startup.is_none()
             && self.claim.is_none()
             && self.poll.is_none()

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use halo::contrib::scheduler::mysql::MySql;
+use halo_harbor_contrib::scheduler::mysql::MySql;
 use harbor::scheduler::Init as _;
 use harbor::{Scheduler as _, net, payload, trace};
 

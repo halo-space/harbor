@@ -160,6 +160,7 @@ CREATE TABLE workers (
     version VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
     modes JSON NOT NULL,
     concurrency INT UNSIGNED NOT NULL,
+    claim_limit INT UNSIGNED NOT NULL,
     heartbeat_timeout BIGINT NOT NULL,
     last_heartbeat BIGINT NOT NULL,
     token VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
@@ -169,6 +170,7 @@ CREATE TABLE workers (
     PRIMARY KEY (worker_id),
     KEY idx_workers_online (offline_time, last_heartbeat, worker_id),
     CONSTRAINT chk_workers_concurrency CHECK (concurrency > 0),
+    CONSTRAINT chk_workers_claim_limit CHECK (claim_limit > 0),
     CONSTRAINT chk_workers_heartbeat CHECK (
         heartbeat_timeout > 0 AND last_heartbeat >= 0
     ),

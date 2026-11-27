@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use halo::contrib::scheduler::redis::Redis;
+use halo_harbor_contrib::scheduler::redis::Redis;
 use harbor::scheduler::Init;
 use harbor::{Scheduler, payload, stats, trace};
 use tracing::instrument::WithSubscriber;
@@ -179,14 +179,14 @@ async fn malformed_records_do_not_discard_valid_claims_from_the_same_call() {
         .query_async::<i32>(&mut connection)
         .await
         .unwrap();
-    assert_eq!(trace_state, "0");
-    assert_eq!(trace_retry, 0);
+    assert_eq!(trace_state, "3");
+    assert_eq!(trace_retry, 1);
     let trace_failed_workers = redis::cmd("LLEN")
         .arg(key::failed_workers(&namespace, "broken-trace"))
         .query_async::<i64>(&mut connection)
         .await
         .unwrap();
-    assert_eq!(trace_failed_workers, 0);
+    assert_eq!(trace_failed_workers, 1);
 
     for id in ["broken-state", "broken-request"] {
         let state = redis::cmd("HGET")
@@ -197,18 +197,6 @@ async fn malformed_records_do_not_discard_valid_claims_from_the_same_call() {
             .unwrap();
         assert_eq!(state, "3");
     }
-
-    redis::cmd("HSET")
-        .arg(format!("{namespace}:traces"))
-        .arg("broken-trace-id")
-        .arg(serde_json::to_string(&trace::Snapshot::code("broken-task")).unwrap())
-        .query_async::<usize>(&mut connection)
-        .await
-        .unwrap();
-    let repaired = scheduler.next_requests(1).await.unwrap().pop().unwrap();
-    assert_eq!(repaired.id, "broken-trace");
-    assert_eq!(repaired.retry_count, 0);
-    settlement::succeed(&scheduler, &repaired).await;
 
     scheduler.close().await.unwrap();
     server.clear(&namespace).await;

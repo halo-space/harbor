@@ -97,6 +97,40 @@ async fn a_crashed_worker_id_can_register_after_its_heartbeat_timeout() {
 }
 
 #[tokio::test]
+async fn heartbeat_refreshes_the_mysql_worker_claim_limit() {
+    let Some(server) = server::Server::connect().await else {
+        return;
+    };
+    let database = server.database("worker-claim-limit").await;
+    let scheduler = fixture::scheduler_with_heartbeat(
+        database.url(),
+        "worker-a",
+        Duration::from_millis(50),
+        Duration::from_millis(200),
+    );
+    fixture::open(&scheduler).await;
+
+    sqlx::query("UPDATE workers SET claim_limit = 10 WHERE worker_id = ?")
+        .bind("worker-a")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if scheduler.claim_limit(3) == 10 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("MySQL Worker heartbeat did not refresh claim_limit");
+
+    scheduler.close().await.unwrap();
+    database.remove().await;
+}
+
+#[tokio::test]
 async fn offline_or_expired_workers_do_not_claim_requests() {
     let Some(server) = server::Server::connect().await else {
         return;

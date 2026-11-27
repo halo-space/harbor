@@ -103,6 +103,12 @@ impl MySql {
         Ok(self)
     }
 
+    pub fn with_claim_limit(mut self, limit: usize) -> Result<Self, scheduler::Error> {
+        self.require_configurable()?;
+        self.worker.set_claim_limit(limit)?;
+        Ok(self)
+    }
+
     pub fn database(&self) -> &str {
         &self.database
     }
@@ -175,6 +181,10 @@ impl MySql {
 impl scheduler::Scheduler for MySql {
     fn lease(&self) -> Option<scheduler::Lease> {
         Some(self.lease)
+    }
+
+    fn claim_limit(&self, configured: usize) -> usize {
+        self.worker.claim_limit(configured)
     }
 
     async fn open(&self, concurrency: usize) -> Result<(), scheduler::Error> {

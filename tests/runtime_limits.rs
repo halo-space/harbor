@@ -343,7 +343,7 @@ async fn claim_limit_fills_concurrency_in_multiple_single_claims() {
 }
 
 #[tokio::test]
-async fn scheduler_can_raise_the_runtime_claim_limit_after_startup() {
+async fn scheduler_claim_limit_cannot_raise_request_concurrency() {
     let scheduler = ClaimScheduler::new(0).with_dynamic_limit(8);
     init_run(&scheduler).await;
     scheduler
@@ -351,9 +351,14 @@ async fn scheduler_can_raise_the_runtime_claim_limit_after_startup() {
         .await
         .unwrap();
 
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
     let mut runtime = engine::Engine::new()
         .with_scheduler(scheduler)
-        .with_downloader(ai_downloader())
+        .with_downloader(SlowDownload {
+            active,
+            max_active: max_active.clone(),
+        })
         .with_spider(EmptySpider::new())
         .build()
         .with_concurrency(4)
@@ -361,7 +366,8 @@ async fn scheduler_can_raise_the_runtime_claim_limit_after_startup() {
 
     runtime.start_until_idle().await.unwrap();
 
-    assert_eq!(runtime.scheduler().calls.lock().unwrap()[0].limit, 8);
+    assert_eq!(runtime.scheduler().calls.lock().unwrap()[0].limit, 4);
+    assert!(max_active.load(Ordering::SeqCst) <= 4);
 }
 
 #[tokio::test]

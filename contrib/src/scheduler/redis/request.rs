@@ -92,10 +92,6 @@ struct RecoverOptions {
 }
 
 enum RestoreFailure {
-    Trace {
-        claimed: Box<Claimed>,
-        error: scheduler::Error,
-    },
     Request {
         segment: String,
         version: String,
@@ -271,12 +267,6 @@ impl Redis {
                 Ok(claimed) if key::segment(&claimed.id) == segment => {
                     match Self::restore(&claimed) {
                         Ok(request) => requests.push(request),
-                        Err(error) if is_trace_error(&error) => {
-                            restore_failures.push(RestoreFailure::Trace {
-                                claimed: Box::new(claimed),
-                                error,
-                            })
-                        }
                         Err(error) => restore_failures.push(RestoreFailure::Request {
                             segment,
                             version,
@@ -756,20 +746,6 @@ impl Redis {
         worker_id: &str,
     ) -> Result<(), scheduler::Error> {
         match failure {
-            RestoreFailure::Trace { claimed, error } => {
-                let payload = release_payload(&claimed)?;
-                self.return_to_queue(&payload, worker_id).await?;
-                tracing::warn!(
-                    request_id = %claimed.id,
-                    task_id = %claimed.task_id,
-                    trace_id = %claimed.trace_id,
-                    version = %claimed.version,
-                    worker_id = %worker_id,
-                    error = %error,
-                    "Redis Request Trace restoration failed; Request returned to queue"
-                );
-                Ok(())
-            }
             RestoreFailure::Request {
                 segment,
                 version,
@@ -798,11 +774,6 @@ impl Redis {
 impl RestoreFailure {
     fn details(&self) -> (String, String, String) {
         match self {
-            Self::Trace { claimed, .. } => (
-                claimed.id.clone(),
-                key::segment(&claimed.id),
-                claimed.version.clone(),
-            ),
             Self::Request {
                 id,
                 segment,
@@ -824,13 +795,6 @@ fn handoff_deadline(
     start.checked_add(budget).ok_or_else(|| {
         scheduler::Error::Message("Redis lease handoff deadline exceeds runtime range".to_string())
     })
-}
-
-fn is_trace_error(error: &scheduler::Error) -> bool {
-    matches!(
-        error,
-        scheduler::Error::TraceNotFound(_) | scheduler::Error::InvalidTrace { .. }
-    )
 }
 
 fn validate_trace_binding(
@@ -856,18 +820,6 @@ fn validate_trace_binding(
         });
     }
     Ok(())
-}
-
-fn release_payload(claimed: &Claimed) -> Result<payload::Payload, scheduler::Error> {
-    let mut payload = payload::Payload::new();
-    payload.id.clone_from(&claimed.id);
-    payload.task_id.clone_from(&claimed.task_id);
-    payload.trace_id.clone_from(&claimed.trace_id);
-    payload.version = validate::integer(&claimed.version, &claimed.id, "version")?;
-    payload.worker_id.clone_from(&claimed.leased_by);
-    payload.node.clone_from(&claimed.node);
-    payload.state = net::State::Processing;
-    Ok(payload)
 }
 
 fn snapshot_retry_limit(claimed: &Claimed) -> Option<i32> {

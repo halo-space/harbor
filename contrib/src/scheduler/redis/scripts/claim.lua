@@ -41,14 +41,17 @@ local worker_host = redis.call('HGET', KEYS[3], 'host')
 local worker_version = redis.call('HGET', KEYS[3], 'version')
 local worker_modes = redis.call('HGET', KEYS[3], 'modes')
 local worker_concurrency_text = redis.call('HGET', KEYS[3], 'concurrency')
+local worker_claim_limit_text = redis.call('HGET', KEYS[3], 'claim_limit')
 local registration_token = redis.call('HGET', KEYS[3], 'token')
 local worker_created_text = redis.call('HGET', KEYS[3], 'created_time')
 local worker_concurrency = tonumber(worker_concurrency_text)
+local worker_claim_limit = tonumber(worker_claim_limit_text)
 local worker_created = tonumber(worker_created_text)
 if not worker_host or worker_host == ''
     or not worker_version or worker_version == ''
     or not worker_modes or worker_modes == '' or worker_modes ~= ARGV[4]
     or not worker_concurrency or worker_concurrency <= 0
+    or not worker_claim_limit or worker_claim_limit <= 0
     or not registration_token or registration_token == ''
     or not worker_created or worker_created <= 0 or worker_created > now then
     return redis.error_reply('CORRUPT_WORKER_METADATA')
