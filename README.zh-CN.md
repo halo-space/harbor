@@ -53,6 +53,24 @@ engine.start().await?;
 默认运行时使用 Memory Scheduler，并把 Item 以 JSONL 写入 `./data/items/`。Redis/MySQL Scheduler
 只替换调度依赖，Item 持久化仍可独立替换。
 
+外部项目使用时，核心运行时与 contrib 实现是两个独立 crate：
+
+```toml
+[dependencies]
+halo = { package = "halo-harbor", version = "0.1.10" }
+halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.3.1" }
+```
+
+分别从两个 crate 根使用核心和 contrib API：
+
+```rust
+use halo::harbor::Request;
+use halo_harbor_contrib::scheduler::redis::Redis;
+```
+
+当前不会把 `halo_harbor_contrib` 重新导出为 `halo::harbor_contrib`；两个 crate 保持独立，
+未来再单独设计 facade。
+
 ## Workspace
 
 | Crate | 职责 |
@@ -91,4 +109,5 @@ cargo test --test x_account -- --ignored --nocapture
 
 其中 Browser 测试需要 `WEBDRIVER_URL`，X 账号接口测试需要 `X_USERNAME` 和 `X_BEARER_TOKEN`。外部测试失败只表示对应真实服务或运行环境未通过验收，不代表默认确定性测试失败。
 
-当前 workspace 版本为 `0.1.0`，使用 MIT License。
+当前已发布版本为：`halo-harbor 0.1.10`、`halo-harbor-contrib 0.3.1`、
+`halo-harbor-macros 0.1.10`、`halo-harbor-worker 0.2.10`。项目使用 MIT License。

@@ -60,6 +60,24 @@ The default runtime uses the in-memory Scheduler and writes Items as JSONL below
 Redis or MySQL replaces only the scheduling dependency; Item persistence remains independently
 replaceable.
 
+For an external application, the core runtime and contrib implementations are separate crates:
+
+```toml
+[dependencies]
+halo = { package = "halo-harbor", version = "0.1.10" }
+halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.3.1" }
+```
+
+Use the core and contrib APIs through their respective crate roots:
+
+```rust
+use halo::harbor::Request;
+use halo_harbor_contrib::scheduler::redis::Redis;
+```
+
+`halo_harbor_contrib` is not re-exported as `halo::harbor_contrib`; the two crates remain
+independent until a future facade is designed.
+
 ## Workspace
 
 | Crate | Responsibility |
@@ -98,4 +116,5 @@ cargo test --test x_account -- --ignored --nocapture
 
 Browser tests require `WEBDRIVER_URL`; X API account tests require `X_USERNAME` and `X_BEARER_TOKEN`. A failure in an external acceptance test only reports an issue with that real service or environment; it does not indicate a failure in the default deterministic test suite.
 
-The workspace is currently at version `0.1.8` and uses the MIT license.
+Published versions are `halo-harbor 0.1.10`, `halo-harbor-contrib 0.3.1`,
+`halo-harbor-macros 0.1.10`, and `halo-harbor-worker 0.2.10`. The project uses the MIT license.
