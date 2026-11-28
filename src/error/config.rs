@@ -6,7 +6,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("config YAML parse failed: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_saphyr::Error),
 
     #[error("config error: {0}")]
     Message(String),

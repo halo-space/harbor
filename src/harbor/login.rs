@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn validates_login_config_and_defaults_durations() {
-        let config: Config = serde_yaml::from_str(
+        let config: Config = serde_saphyr::from_str(
             r##"
 login_key: jd_main
 url: https://passport.jd.com/
@@ -237,7 +237,7 @@ actions:
 
     #[test]
     fn rejects_missing_login_check() {
-        let config: Config = serde_yaml::from_str(
+        let config: Config = serde_saphyr::from_str(
             r#"
 login_key: jd_main
 url: https://passport.jd.com/
@@ -251,7 +251,7 @@ check: {}
 
     #[test]
     fn rejects_environment_login_values() {
-        let config: Config = serde_yaml::from_str(
+        let config: Config = serde_saphyr::from_str(
             r##"
 login_key: jd_main
 url: https://passport.jd.com/

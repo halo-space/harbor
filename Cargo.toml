@@ -19,7 +19,7 @@ resolver = "3"
 edition = "2024"
 license = "MIT"
 rust-version = "1.97.0"
-version = "0.1.10"
+version = "0.1.11"
 
 [workspace.dependencies]
 async-openai = { version = "0.41.1", default-features = false, features = ["chat-completion", "middleware", "rustls"] }
@@ -42,7 +42,7 @@ mime = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_json_path = "0.7.2"
-serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
+serde_saphyr = { package = "serde-saphyr", version = "3.0.0-rc.1", default-features = false, features = ["deserialize"] }
 jiff = "0.2.43"
 sqlx = { version = "0.9.1", default-features = false, features = ["mysql", "postgres", "runtime-tokio", "tls-rustls", "json"] }
 sha2 = "0.10"
@@ -53,7 +53,7 @@ tracing = "0.1"
 tower = { version = "0.5", default-features = false }
 url = "2"
 uuid = { version = "1", features = ["v7"] }
-halo_validator = { package = "halo-validator", version = "0.3.0" }
+halo_validator = { package = "halo-validator", version = "0.3.1" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "gzip", "brotli", "deflate", "stream"] }
 secrecy = "0.10"
 cookie_store = { version = "0.22.1", default-features = false, features = ["serde"] }
@@ -93,7 +93,7 @@ selectors = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_json_path = { workspace = true }
-serde_yaml = { workspace = true }
+serde_saphyr = { workspace = true }
 sha2 = { workspace = true }
 thirtyfour = { workspace = true }
 strsim = { workspace = true }
@@ -107,4 +107,4 @@ halo_validator = { workspace = true }
 
 [dev-dependencies]
 flate2 = { workspace = true }
-macros = { package = "halo-harbor-macros", path = "macros", version = "0.1.10" }
+macros = { package = "halo-harbor-macros", path = "macros", version = "0.1.11" }

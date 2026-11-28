@@ -33,7 +33,7 @@ tokio = { version = "1", features = ["macros", "rt", "fs", "signal"] }
 
 # Item 和 Rules 配置使用 Serde。
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.10"
+serde-saphyr = "3.0.0-rc.1"
 ```
 
 ## 2. 代码模式

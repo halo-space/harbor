@@ -40,7 +40,7 @@ impl Config {
     }
 
     pub fn from_yaml(content: &str) -> Result<Self, Error> {
-        let config = serde_yaml::from_str::<Self>(content)?;
+        let config = serde_saphyr::from_str::<Self>(content)?;
         config.validate()?;
         Ok(config)
     }

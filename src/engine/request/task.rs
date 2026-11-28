@@ -211,7 +211,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
@@ -274,6 +274,7 @@ mod tests {
     struct FailedAcknowledgement {
         acknowledgements: AtomicUsize,
         releases: AtomicUsize,
+        ambiguous_release: AtomicBool,
     }
 
     impl Scheduler for FailedAcknowledgement {
@@ -312,7 +313,16 @@ mod tests {
         }
 
         async fn release(&self, _: &payload::Payload) -> Result<(), scheduler::Error> {
-            self.releases.fetch_add(1, Ordering::Relaxed);
+            let attempt = self.releases.fetch_add(1, Ordering::Relaxed);
+            if self.ambiguous_release.load(Ordering::Relaxed) {
+                return if attempt == 0 {
+                    Err(scheduler::Error::Unavailable(
+                        "release response lost after commit".to_string(),
+                    ))
+                } else {
+                    Err(scheduler::Error::StateMismatch("request-1".to_string()))
+                };
+            }
             Err(scheduler::Error::Message("cleanup failed".to_string()))
         }
 
@@ -494,6 +504,20 @@ mod tests {
         ] {
             assert!(warning.contains(value), "missing {value} in {warning}");
         }
+    }
+
+    #[tokio::test]
+    async fn release_retry_converges_after_commit_response_loss() {
+        let scheduler = FailedAcknowledgement {
+            ambiguous_release: AtomicBool::new(true),
+            ..Default::default()
+        };
+
+        release_unstarted(&scheduler, &payload::Payload::new())
+            .await
+            .unwrap();
+
+        assert_eq!(scheduler.releases.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]

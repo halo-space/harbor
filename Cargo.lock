@@ -39,6 +39,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0258346f92c78dbc5b336b9a5b27c64447aa10643bc64e651db2edb145361564"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width",
+]
+
+[[package]]
+name = "anstyle"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
+
+[[package]]
 name = "arc-swap"
 version = "1.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -52,6 +69,12 @@ name = "arcstr"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
+
+[[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "async-compression"
@@ -771,6 +794,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoding_rs_io"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fba3fe847045ecff794b9c138293a80db914678c453ad63fbf0c6a9eb6e00b22"
+dependencies = [
+ "encoding_rs",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1118,8 +1150,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "granit-parser"
+version = "3.0.0-rc2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419a4b102ec96e535051f6cb395a8ec5559a91afbaaeb641c6749be043033709"
+dependencies = [
+ "arraydeque",
+ "smallvec",
+]
+
+[[package]]
 name = "halo-harbor"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-openai",
  "bytes",
@@ -1145,9 +1187,9 @@ dependencies = [
  "secrecy",
  "selectors",
  "serde",
+ "serde-saphyr",
  "serde_json",
  "serde_json_path",
- "serde_yaml_ng",
  "sha2 0.10.9",
  "strsim",
  "thirtyfour",
@@ -1161,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "halo-harbor-contrib"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1184,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "halo-harbor-macros"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1195,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "halo-harbor-worker"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "halo-harbor",
  "tokio",
@@ -1203,16 +1245,16 @@ dependencies = [
 
 [[package]]
 name = "halo-validator"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae289bc4c475ab0251cb3fd972d91011ed7499207e7867af800c80f485ddf32"
+checksum = "09a1694e9fef5468c048c5d4d62d3f837ef0fbe277742c9bcb52b11010666be1"
 dependencies = [
  "halo-validator-derive",
  "http",
  "regex",
  "serde",
+ "serde-saphyr",
  "serde_json",
- "serde_yaml_ng",
  "thiserror",
  "unicode-ident",
  "url",
@@ -1851,6 +1893,12 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nom"
@@ -2605,6 +2653,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-saphyr"
+version = "3.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34624162e8c491a945c7dbf4b1affb57423ad5c6aaf0347b3c1179cb968b844c"
+dependencies = [
+ "annotate-snippets",
+ "base64 0.23.1",
+ "encoding_rs_io",
+ "granit-parser",
+ "nohash-hasher",
+ "num-traits",
+ "serde_core",
+ "smallvec",
+ "zmij",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2710,19 +2775,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "serde_yaml_ng"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -3526,16 +3578,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993ad287eb20e8ba755312801cfe1413e0f25d604075863acaddca10b04c1833"
 
 [[package]]
+name = "unicode-width"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
+
+[[package]]
 name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

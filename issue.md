@@ -184,7 +184,9 @@ DSL 生成 Browser Request 后，默认 Memory Scheduler 不会领取，Request 
 - 只有外部健康检查先把 Worker 标记为 offline，之后才能调用 `recover_worker(worker_id)`。
 - 回收条件是 `state = processing` 且 `leased_by = worker_id`，不检查 lease_time。
 - 回收会清空 `leased_by`、重置 `lease_time` 并重新入队；下一次 claim 递增 version。
-- 未完成 ack 的 Request 回收不消耗 retry_count；已经 ack 的 Request 按队列重试规则处理。
+- 无论是否完成 ack，离线 Worker 回收都不消耗 Request 的 retry_count；回收后统一重置为 0，
+  因为这是执行环境故障，不是 Request 业务重试。已 ack 的 Request 仍记录 failed_workers，
+  用于排除原 Worker；未 ack 的 Request 不新增失败 Worker记录。
 - 旧 Worker 的 Ack 仍须通过 `leased_by + version` 校验，回收后的旧 Ack 必须失败。
 - Worker offline 状态检测与 Request 回收是两个独立动作。
 - Memory 是进程内存储，不维护可供外部恢复的 Worker 状态；进程退出后由进程状态丢失语义处理，不提供租约超时回收。
@@ -301,7 +303,7 @@ Memory 提供显式 `Memory::cleanup(before)`，清理超过截止时间的终�
 - 计算下一次执行时间。
 - 支持一次性任务、周期性任务和工作日限制等表达式能力。
 - Cron 不创建 Request，不解析 DSL，不调用 Worker，不管理 Scheduler，也不保存 Item。
-- 任务配置读取、到期后的消息写入 Load 队列和失败恢复属于外部 Cron / Master 应用层。
+- 任务配置读取、到期后的消息写入 Load 队列和失败恢复属于外部 Cron / 调度应用层。
 - Worker 从 Load 队列读取任务配置后，再根据 DSL 初始化 Trace 并生成 Request。
 
 相关代码：
@@ -310,7 +312,108 @@ Memory 提供显式 `Memory::cleanup(before)`，清理超过截止时间的终�
 
 实现结论：
 
-`contrib::cron` 只提供表达式解析、到期判断和 `next_time` 计算，不提供完整 Cron 控制面。
+`halo_harbor_contrib::cron` 只提供表达式解析、到期判断和 `next_time` 计算，不提供完整 Cron 控制面。
+
+### 11. 删除 Master API 后的文档残留检查
+
+状态：已处理（仅本地忽略的设计文档）
+
+问题：
+
+Master API、ApiScheduler 等旧设计已经不属于当前 Harbor 架构。文档如果继续保留这些名称，
+会把已经删除的调度模式重新带回实现和使用说明。
+
+当前复查结果：
+
+- 核心源码、README、架构文档和 `.gitignore` 下的 `docs/chapters`、`docs/master`、
+  `docs/TODO.md` 已完成清理；这些设计文档按约定不提交 Git。
+- 后续新增文档不得重新引入这些旧概念。
+
+验证：
+
+- `rg -n -i 'api.?scheduler|master.?api|apischeduler|scheduler/api' docs README* src contrib worker examples tests` 无结果。
+
+### 12. Release 重试需要幂等
+
+状态：已确认，已实现
+
+复查结果：
+
+Worker 在未开始执行前释放 Request 时，数据库后端会先写回队列，再清理 processing 状态。
+如果事务已经提交但响应丢失，Worker 重试 release 时，Request 已经是 pending，当前实现会把这次
+重试报告为状态错误。但 Engine 已将 `StateMismatch`、`RequestNotFound` 等所有权丢失错误归类为
+可安全结束的释放结果，因此数据实际已经回到队列时，不会再把当前 Request 判为执行失败。
+
+相关代码：
+
+- `src/engine/request/task.rs:132-140`
+- `contrib/src/scheduler/postgres/settle.rs:51-78`
+- `contrib/src/scheduler/mysql/settle.rs:51-78`
+- Redis release 脚本
+
+已确定边界：
+
+- `Scheduler::release` 只接受当前有效的 `processing + leased_by + version`，不把所有 `pending`
+  Request 都视为重复成功。
+- Engine 的释放重试遇到 `StateMismatch / RequestNotFound` 等 ownership-loss 错误时，按“可能已经
+  提交成功”收敛，不把当前 Request 再判为执行失败。
+- 旧版本、其他 Worker 或非法状态仍然返回所有权或状态错误；Ack 继续校验 `leased_by + version`。
+- Memory、Redis、MySQL、PostgreSQL 保持这一公共边界，不新增数据库字段。
+
+实现与验证：
+
+- `src/engine/request/task.rs` 已覆盖“首次提交后响应丢失、重试返回 `StateMismatch`”场景。
+- `release_retry_converges_after_commit_response_loss` 回归测试已通过。
+
+### 13. YAML 解析依赖存在维护风险
+
+状态：已处理
+
+问题：
+
+Harbor 自己的 YAML 入口已切换到 `serde-saphyr 3.0.0-rc.1`。它直接提供 Serde 反序列化，
+要求 Rust 1.89+，不由 Harbor 自己维护解析器分叉。
+
+`halo-validator 0.3.1` 已移除 `serde_yaml_ng` 传递依赖，当前依赖树中不再包含
+`unsafe-libyaml`。
+
+依赖路径：
+
+- `Cargo.toml` 的 `serde-saphyr` 配置
+- `halo-validator 0.3.1` 不再引入 `serde_yaml_ng` 或 `unsafe-libyaml`
+
+边界：
+
+- Harbor 不再直接依赖 `serde_yaml_ng`，也不在内部维护 YAML 解析器分叉。
+- 解析能力由外部 `serde-saphyr` 与 `halo-validator` 提供，Harbor 只使用公开 API。
+
+验证：
+
+- `cargo check --workspace` 通过。
+- 配置和登录 YAML 测试通过。
+- `cargo tree -i unsafe-libyaml --workspace` 确认该依赖不存在。
+
+### 14. 外部真实环境验收未纳入默认自动化
+
+状态：已处理，待接入具备依赖的 CI 环境
+
+问题：
+
+EastMoney、X、真实 HTTP、Browser/ChromeDriver 和真实数据库测试目前都需要显式环境，默认测试不会
+访问网络、浏览器或外部服务。因此默认 CI 通过并不等于这些真实链路已经持续验收。
+
+现状：
+
+- 默认 `cargo test --workspace --all-targets` 保持确定性并已通过。
+- 真实网络和浏览器测试使用 `#[ignore]` 或独立环境开关。
+- PostgreSQL、MySQL、Redis 测试需要对应服务。
+
+处理方向：
+
+- 保留默认测试的离线确定性。
+- 已增加 `scripts/acceptance.sh`，提供 `network / browser / x-account / all` 四种入口；
+  缺少依赖时明确跳过并给出原因。
+- 在具备服务和凭据的 CI 环境中单独执行，不把账号、Cookie、Token 或外部数据写入仓库。
 
 ## 外部验收测试
 
