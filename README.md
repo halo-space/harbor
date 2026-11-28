@@ -3,12 +3,12 @@
 [简体中文](README.zh-CN.md) | English
 
 `Harbor` is a Rust crawler runtime for code-driven and YAML Rules-driven workloads. The same Engine
-contract supports local execution and durable Redis or MySQL 9 scheduling.
+contract supports local execution and durable Redis, MySQL 9, or PostgreSQL scheduling.
 
 ## Highlights
 
 - Code mode and YAML Rules mode share the same Spider, Request, Response, Item, Middleware, and Engine.
-- Memory, Redis, and MySQL Scheduler implementations use one scheduling contract.
+- Memory, Redis, MySQL, and PostgreSQL Scheduler implementations use one scheduling contract.
 - HTTP downloading includes retries, bounded bodies, redirects, cookies, proxy/TLS settings, and
   deterministic response decoding.
 - Browser downloading uses `thirtyfour` with Chrome/Chromium, rendered DOM responses, Session cookie
@@ -41,7 +41,7 @@ run. The daily/one-time schedule is created by the external Scheduler or Cron se
 only describes the Request graph.
 
 `halo-harbor-worker` is a generic Worker library. The application assembles it with a concrete
-Scheduler through `Engine::with_scheduler(...)`; Memory, Redis, and MySQL are replaceable Scheduler
+Scheduler through `Engine::with_scheduler(...)`; Memory, Redis, MySQL, and PostgreSQL are replaceable Scheduler
 implementations and are not selected through Worker environment variables.
 Each Scheduler owns its own registration, heartbeat, claiming, recovery, and settlement behavior.
 
@@ -57,7 +57,7 @@ engine.start().await?;
 
 `start()` keeps the Worker alive while the queue is empty and shuts down cleanly on SIGINT/SIGTERM.
 The default runtime uses the in-memory Scheduler and writes Items as JSONL below `./data/items/`.
-Redis or MySQL replaces only the scheduling dependency; Item persistence remains independently
+Redis, MySQL, or PostgreSQL replaces only the scheduling dependency; Item persistence remains independently
 replaceable.
 
 For an external application, the core runtime and contrib implementations are separate crates:
@@ -65,7 +65,7 @@ For an external application, the core runtime and contrib implementations are se
 ```toml
 [dependencies]
 halo = { package = "halo-harbor", version = "0.1.10" }
-halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.3.1" }
+halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.4.0" }
 ```
 
 Use the core and contrib APIs through their respective crate roots:
@@ -74,6 +74,17 @@ Use the core and contrib APIs through their respective crate roots:
 use halo::harbor::Request;
 use halo_harbor_contrib::scheduler::redis::Redis;
 ```
+
+PostgreSQL scheduling uses the same contract:
+
+```rust
+use halo_harbor_contrib::scheduler::postgres::Postgres;
+
+let scheduler = Postgres::new("postgres://user:password@127.0.0.1:5432/harbor")?;
+```
+
+Install `contrib/sql/postgres/schema.sql` before opening the Scheduler. The PostgreSQL backend does
+not create or migrate operator-owned tables automatically.
 
 `halo_harbor_contrib` is not re-exported as `halo::harbor_contrib`; the two crates remain
 independent until a future facade is designed.
@@ -84,7 +95,7 @@ independent until a future facade is designed.
 | --- | --- |
 | `halo-harbor` | Core runtime, Engine, Scheduler contracts, HTTP downloader, Rules, selectors, and Item Store |
 | `halo-harbor-macros` | Spider, handler, and Item derive macros |
-| `halo-harbor-contrib` | Redis/MySQL Schedulers and distributed middleware implementations |
+| `halo-harbor-contrib` | Redis/MySQL/PostgreSQL Schedulers and distributed middleware implementations |
 | `halo-harbor-worker` | Generic Worker library that runs the shared Engine with injected Scheduler, Downloader, Spider, Middleware, and Store |
 | `examples` | Executable code-mode and Rules-mode examples |
 
@@ -116,5 +127,5 @@ cargo test --test x_account -- --ignored --nocapture
 
 Browser tests require `WEBDRIVER_URL`; X API account tests require `X_USERNAME` and `X_BEARER_TOKEN`. A failure in an external acceptance test only reports an issue with that real service or environment; it does not indicate a failure in the default deterministic test suite.
 
-Published versions are `halo-harbor 0.1.10`, `halo-harbor-contrib 0.3.1`,
+Published versions are `halo-harbor 0.1.10`, `halo-harbor-contrib 0.4.0`,
 `halo-harbor-macros 0.1.10`, and `halo-harbor-worker 0.2.10`. The project uses the MIT license.

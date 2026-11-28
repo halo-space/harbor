@@ -44,7 +44,7 @@ serde_json = "1"
 serde_json_path = "0.7.2"
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 jiff = "0.2.43"
-sqlx = { version = "0.9.1", default-features = false, features = ["mysql", "runtime-tokio", "tls-rustls", "json"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["mysql", "postgres", "runtime-tokio", "tls-rustls", "json"] }
 sha2 = "0.10"
 thirtyfour = { version = "0.38.1", default-features = false, features = ["rustls", "manager", "component", "cdp-events"] }
 thiserror = "2"

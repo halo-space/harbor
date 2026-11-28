@@ -1,0 +1,79 @@
+use std::time::Duration;
+
+use halo_harbor_contrib::scheduler::postgres::Postgres;
+use harbor::scheduler::Init as _;
+use harbor::{Scheduler as _, net, payload, trace};
+
+pub(super) const TASK_ID: &str = "postgres-test-task";
+pub(super) const TRACE_ID: &str = "postgres-test-trace";
+
+pub(super) fn scheduler(url: &str, worker_id: &str) -> Postgres {
+    Postgres::new(url)
+        .unwrap()
+        .with_worker_id(worker_id)
+        .unwrap()
+        .with_worker_host("postgres-test-host")
+        .unwrap()
+        .with_worker_version("test")
+        .unwrap()
+        .with_modes([net::Mode::Http, net::Mode::Browser])
+        .unwrap()
+}
+
+#[allow(dead_code)]
+pub(super) fn scheduler_with_heartbeat(
+    url: &str,
+    worker_id: &str,
+    interval: Duration,
+    timeout: Duration,
+) -> Postgres {
+    scheduler(url, worker_id)
+        .with_heartbeat(interval, timeout)
+        .unwrap()
+}
+
+pub(super) async fn open(scheduler: &Postgres) {
+    scheduler.open(16).await.unwrap();
+}
+
+pub(super) async fn init(scheduler: &Postgres) {
+    scheduler
+        .init(
+            TRACE_ID.to_string(),
+            trace::Snapshot::code(TASK_ID),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+}
+
+pub(super) fn request(id: &str) -> net::Request {
+    let mut request = net::Request::follow(format!("https://example.com/{id}"))
+        .unwrap()
+        .with_id(id);
+    request.task_id = TASK_ID.to_string();
+    request.trace_id = TRACE_ID.to_string();
+    request
+}
+
+pub(super) fn processing(request: &net::Request) -> payload::Payload {
+    let mut payload = payload::Payload::for_request(request, request.leased_by.clone());
+    payload.state = net::State::Processing;
+    payload
+}
+
+pub(super) fn success(request: &net::Request) -> payload::Payload {
+    let mut payload = payload::Payload::for_request(request, request.leased_by.clone());
+    payload.start_time = Some(1);
+    payload.end_time = Some(2);
+    payload
+}
+
+#[allow(dead_code)]
+pub(super) fn failure(request: &net::Request, error: &str) -> payload::Payload {
+    let mut payload =
+        payload::Payload::for_request(request, request.leased_by.clone()).failed(error);
+    payload.start_time = Some(1);
+    payload.end_time = Some(2);
+    payload
+}

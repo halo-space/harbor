@@ -3,12 +3,12 @@
 简体中文 | [English](README.md)
 
 `Harbor` 是一个同时支持代码模式与 YAML Rules 模式的 Rust 爬虫运行时。同一套 Engine 合同可以运行在
-本地内存调度、Redis 持久化调度与 MySQL 9 持久化调度中。
+本地内存调度、Redis 持久化调度、MySQL 9 持久化调度与 PostgreSQL 持久化调度中。
 
 ## 核心能力
 
 - 代码模式与 Rules 模式共用 Spider、Request、Response、Item、Middleware 和 Engine。
-- Memory、Redis、MySQL Scheduler 使用同一套调度合同。
+- Memory、Redis、MySQL、PostgreSQL Scheduler 使用同一套调度合同。
 - HTTP 下载支持重试、响应体上限、重定向、Cookie、Proxy/TLS 和确定性字符集解码。
 - Browser Downloader 使用 `thirtyfour` 驱动 Chrome/Chromium，支持渲染 DOM、Session Cookie 复用和 CSS 等待。
 - 内置 CSS Selector、确定性 CSS Healing、RFC 9535 JSONPath，以及显式的 OpenAI-compatible JSON 对象提取。
@@ -36,7 +36,7 @@ cargo run -p examples --bin rules
 每天一次或只执行一次由外部 Scheduler/Cron 服务创建 Task，Rules DSL 只描述 Request 图。
 
 `halo-harbor-worker` 是通用 Worker 库。应用通过 `Builder::with_scheduler(...)` 注入具体
-Scheduler；Memory、Redis 和 MySQL 都是可替换的 Scheduler 实现，不由 Worker
+Scheduler；Memory、Redis、MySQL 和 PostgreSQL 都是可替换的 Scheduler 实现，不由 Worker
 通过环境变量选择。注册、心跳、领取、恢复和结算都由注入的 Scheduler 自己负责。
 
 最小 Engine 装配方式：
@@ -50,7 +50,7 @@ engine.start().await?;
 ```
 
 `start()` 在队列为空时仍保持 Worker 运行，收到 SIGINT/SIGTERM 后再排空并关闭。
-默认运行时使用 Memory Scheduler，并把 Item 以 JSONL 写入 `./data/items/`。Redis/MySQL Scheduler
+默认运行时使用 Memory Scheduler，并把 Item 以 JSONL 写入 `./data/items/`。Redis/MySQL/PostgreSQL Scheduler
 只替换调度依赖，Item 持久化仍可独立替换。
 
 外部项目使用时，核心运行时与 contrib 实现是两个独立 crate：
@@ -58,7 +58,7 @@ engine.start().await?;
 ```toml
 [dependencies]
 halo = { package = "halo-harbor", version = "0.1.10" }
-halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.3.1" }
+halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.4.0" }
 ```
 
 分别从两个 crate 根使用核心和 contrib API：
@@ -67,6 +67,17 @@ halo_harbor_contrib = { package = "halo-harbor-contrib", version = "0.3.1" }
 use halo::harbor::Request;
 use halo_harbor_contrib::scheduler::redis::Redis;
 ```
+
+PostgreSQL 调度使用同一套 Scheduler 合同：
+
+```rust
+use halo_harbor_contrib::scheduler::postgres::Postgres;
+
+let scheduler = Postgres::new("postgres://user:password@127.0.0.1:5432/harbor")?;
+```
+
+打开 Scheduler 前先安装 `contrib/sql/postgres/schema.sql`。PostgreSQL 后端不会自动创建或迁移
+业务方管理的数据表。
 
 当前不会把 `halo_harbor_contrib` 重新导出为 `halo::harbor_contrib`；两个 crate 保持独立，
 未来再单独设计 facade。
@@ -77,7 +88,7 @@ use halo_harbor_contrib::scheduler::redis::Redis;
 | --- | --- |
 | `halo-harbor` | 核心运行时、Engine、Scheduler 合同、HTTP 下载、Rules、Selector 与 Item Store |
 | `halo-harbor-macros` | Spider、处理函数与 Item 派生宏 |
-| `halo-harbor-contrib` | Redis/MySQL Scheduler 与分布式中间件实现 |
+| `halo-harbor-contrib` | Redis/MySQL/PostgreSQL Scheduler 与分布式中间件实现 |
 | `halo-harbor-worker` | 通用 Worker 库，运行共享 Engine，并接收外部注入的 Scheduler、Downloader、Spider、Middleware 和 Store |
 | `examples` | 可直接运行的代码模式与 Rules 模式示例 |
 
@@ -109,5 +120,5 @@ cargo test --test x_account -- --ignored --nocapture
 
 其中 Browser 测试需要 `WEBDRIVER_URL`，X 账号接口测试需要 `X_USERNAME` 和 `X_BEARER_TOKEN`。外部测试失败只表示对应真实服务或运行环境未通过验收，不代表默认确定性测试失败。
 
-当前已发布版本为：`halo-harbor 0.1.10`、`halo-harbor-contrib 0.3.1`、
+当前已发布版本为：`halo-harbor 0.1.10`、`halo-harbor-contrib 0.4.0`、
 `halo-harbor-macros 0.1.10`、`halo-harbor-worker 0.2.10`。项目使用 MIT License。

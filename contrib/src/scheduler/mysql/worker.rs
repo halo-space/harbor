@@ -411,7 +411,7 @@ impl Worker {
             "INSERT INTO workers \
              (worker_id, host, ip, version, modes, concurrency, claim_limit, heartbeat_timeout, \
               last_heartbeat, token, offline_time, created_time, updated_time) \
-             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, \
                      CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))",
         )
         .bind(&worker_id)

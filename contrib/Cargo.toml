@@ -1,10 +1,10 @@
 [package]
 name = "halo-harbor-contrib"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Redis, MySQL, and distributed middleware implementations for Harbor."
+description = "Redis, MySQL, PostgreSQL, and distributed middleware implementations for Harbor."
 repository = "https://github.com/halo-space/harbor"
 readme = "../README.md"
 

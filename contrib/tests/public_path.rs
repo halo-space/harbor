@@ -1,5 +1,6 @@
 use halo_harbor_contrib::cron::Crontab;
 use halo_harbor_contrib::load::redis::Redis as LoadRedis;
+use halo_harbor_contrib::scheduler::postgres::Postgres;
 use halo_harbor_contrib::store::redis::Redis;
 
 #[test]
@@ -23,4 +24,9 @@ fn cron_uses_the_public_contrib_path() {
 
     assert_eq!(cron.expression(), "0 10 * * 1-5");
     assert_eq!(cron.timezone().iana_name(), Some("Asia/Shanghai"));
+}
+
+#[test]
+fn postgres_scheduler_uses_the_public_contrib_path() {
+    assert!(Postgres::new("postgres://postgres:123456@127.0.0.1:5432/postgres").is_ok());
 }
